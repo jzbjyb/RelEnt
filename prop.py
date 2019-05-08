@@ -21,8 +21,9 @@ def subprop(args):
             if len(subs) > 0:
                 num_parent += 1
                 num_pairs += len(subs) * (len(subs) - 1)
-            fout.write('{},{}\t{}\n'.format(pid, plabel, 
-                '\t'.join(map(lambda x: ','.join(x), subs))))
+            ln = '{},{}\t{}\n'.format(pid, plabel, 
+                '\t'.join(map(lambda x: ','.join(x), subs)))
+            fout.write(ln)
     print('{} props'.format(len(all_props)))
     print('{} parents'.format(num_parent))
     print('{} pairs'.format(num_pairs))

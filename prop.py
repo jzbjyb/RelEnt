@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 
 
-import argparse, json
+import argparse, json, os, time
 from collections import defaultdict
 import numpy as np
 from wikiutil.property import get_sub_properties, read_subprop_file, get_subtree, print_subtree, get_depth
-
+from wikiutil.wikidata_query_service import get_property_occurrence
 
 def subprop(args):
     all_props = []
@@ -31,7 +31,7 @@ def subprop(args):
     print('{} pairs'.format(num_pairs))
 
 
-def build_tree(args):
+def build_tree(args, use_return=False):
     subprops = read_subprop_file(args.inp)
     num_prop = len(subprops)
     print('{} props'.format(num_prop))
@@ -63,6 +63,9 @@ def build_tree(args):
     print('avg depth: {}'.format(np.mean([get_depth(s) for s in subtrees])))
     print('{} isolated prop'.format(len(isolate)))
 
+    if use_return:
+        return subtrees, isolate
+
     with open(args.out, 'w') as fout:
         fout.write('\n--- subtrees ---\n\n')
         for st in subtrees:
@@ -72,9 +75,49 @@ def build_tree(args):
             fout.write('{}: {}\n'.format(ip[0], pid2plabel[ip[0]]))
 
 
+def prop_occur(args, only_isolate=True):
+    subprops = read_subprop_file(args.inp)
+    num_prop = len(subprops)
+    print('{} props'.format(num_prop))
+
+    _, isolate = build_tree(args, use_return=True)
+    isolate = set(iso[0] for iso in isolate)
+
+    for prop in subprops:
+        pid = prop[0][0]
+        if only_isolate and pid in isolate:
+            continue
+        try:
+            try:
+                rand = True
+                results = get_property_occurrence(pid, limit=1000, timeout=30)
+            except:
+                time.sleep(60)
+                rand = False
+                results = get_property_occurrence(pid, limit=1000, timeout=30, fast=True)
+            print('fetch {}, get {} occurrence'.format(pid, len(results['results']['bindings'])))
+            suffix = '' if rand else '.order'
+            with open(os.path.join(args.out, pid + '.txt' + suffix), 'w') as fout, \
+                    open(os.path.join(args.out, pid + '.raw' + suffix), 'w') as raw_fout:
+                for result in results['results']['bindings']:
+                    raw_fout.write('{}\n'.format(result))
+                    if result['item']['type'] != 'uri' or result['value']['type'] != 'uri':
+                        continue
+                    item = result['item']['value'].rsplit('/')[-1]
+                    value = result['value']['value'].rsplit('/')[-1]
+                    item_label = result['itemLabel']['value']
+                    value_label = result['valueLabel']['value']
+                    fout.write('{}\t{}\t{}\t{}\n'.format(item, item_label, value, value_label))
+            time.sleep(5)
+        except Exception as e:
+            print('exception at {}'.format(pid))
+            time.sleep(60)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
-    parser.add_argument('--task', type=str, choices=['subprop', 'build_tree'], required=True)
+    parser.add_argument('--task', type=str,
+                        choices=['subprop', 'build_tree', 'prop_occur_only', 'prop_occur'], required=True)
     parser.add_argument('--inp', type=str, required=True)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -85,3 +128,8 @@ if __name__ == '__main__':
     elif args.task == 'build_tree':
         # build a tree-like structure using the sub-properties extracted
         build_tree(args)
+    elif args.task == 'prop_occur_only':
+        prop_occur(args, only_isolate=True)
+    elif args.task == 'prop_occur':
+        prop_occur(args, only_isolate=False)
+

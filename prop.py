@@ -114,10 +114,35 @@ def prop_occur(args, only_isolate=True):
             time.sleep(60)
 
 
+def prop_entities(args):
+    cache = set()
+    rand_num, non_rand_num = 0, 0
+    with open(args.out, 'w') as fout:
+        for root, dirs, files in os.walk(args.inp):
+            for file in files:
+                if file.endswith('.txt'):
+                    rand_num += 1
+                elif file.endswith('.txt.order'):
+                    non_rand_num += 1
+                else:
+                    continue
+                with open(os.path.join(root, file), 'r') as fin:
+                    for l in fin:
+                        hid, _, tid, _ = l.strip().split('\t')
+                        if hid not in cache:
+                            fout.write('{}\n'.format(hid))
+                            cache.add(hid)
+                        if tid not in cache:
+                            fout.write('{}\n'.format(tid))
+                            cache.add(tid)
+    print('#random file {}, #non-random file {}'.format(rand_num, non_rand_num))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
-                        choices=['subprop', 'build_tree', 'prop_occur_only', 'prop_occur'], required=True)
+                        choices=['subprop', 'build_tree', 'prop_occur_only',
+                                 'prop_occur', 'prop_entities'], required=True)
     parser.add_argument('--inp', type=str, required=True)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -129,7 +154,11 @@ if __name__ == '__main__':
         # build a tree-like structure using the sub-properties extracted
         build_tree(args)
     elif args.task == 'prop_occur_only':
+        # get entities linked by properties in a subtree
         prop_occur(args, only_isolate=True)
     elif args.task == 'prop_occur':
+        # get entities linked by all properties
         prop_occur(args, only_isolate=False)
-
+    elif args.task == 'prop_entities':
+        # collect all the entities linked by the properties we are interested in
+        prop_entities(args)

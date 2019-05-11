@@ -3,8 +3,10 @@
 
 import argparse, json, os, time
 from collections import defaultdict
+from tqdm import tqdm
 import numpy as np
-from wikiutil.property import get_sub_properties, read_subprop_file, get_subtree, print_subtree, get_depth
+from wikiutil.property import get_sub_properties, read_subprop_file, get_subtree, print_subtree, get_depth, \
+    hiro_subgraph_to_tree_dict, tree_dict_to_adj
 from wikiutil.wikidata_query_service import get_property_occurrence
 
 def subprop(args):
@@ -138,11 +140,26 @@ def prop_entities(args):
     print('#random file {}, #non-random file {}'.format(rand_num, non_rand_num))
 
 
+def hiro_to_subgraph(args, max_hop=1):
+    eid_file, hiro_file = args.inp.split(':')
+    with open(eid_file, 'r') as eid_fin, \
+            open(hiro_file, 'r') as hiro_fin, \
+            open(args.out, 'w') as fout:
+        for i, l in tqdm(enumerate(eid_fin)):
+            eid = l.strip()
+            hiro_subg = json.loads(hiro_fin.readline().strip())
+            tree_dict = hiro_subgraph_to_tree_dict(eid, hiro_subg, max_hop=max_hop)
+            adj_list = tree_dict_to_adj(tree_dict)
+            fout.write(eid + '\t')  # write root entity
+            fout.write('\t'.join(map(lambda x: ' '.join(x), adj_list)))
+            fout.write('\n')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
                         choices=['subprop', 'build_tree', 'prop_occur_only',
-                                 'prop_occur', 'prop_entities'], required=True)
+                                 'prop_occur', 'prop_entities', 'hiro_to_subgraph'], required=True)
     parser.add_argument('--inp', type=str, required=True)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -162,3 +179,6 @@ if __name__ == '__main__':
     elif args.task == 'prop_entities':
         # collect all the entities linked by the properties we are interested in
         prop_entities(args)
+    elif args.task == 'hiro_to_subgraph':
+        # convert the format hiro provides to list of tuples with a root node
+        hiro_to_subgraph(args, max_hop=1)

@@ -1,5 +1,43 @@
 from typing import List, Tuple, Dict
+from collections import defaultdict
 import subprocess
+
+
+def hiro_subgraph_to_tree_dict(root: str,
+						  hiro_subg: List[Tuple[List[str], str, int]],
+						  max_hop=1) -> Tuple[str, Dict[str, Tuple[str, Dict]]]:
+	# group all the entities by their depth
+	hop_dict: Dict[int, List[Tuple[List[str], str, int]]] = defaultdict(lambda: [])
+	for e in hiro_subg:
+		depth = e[2]
+		hop_dict[depth].append(e)
+	# generate subgraph dict from small hop to large hop
+	# recursive tree structure that cannot handle cycles
+	# TODO: hiro's graph is acyclic by its nature and might not be complete
+	# TODO: hiro's graph is not complete comparing to the wikidata page and some properties are duplicate
+	tree_dict: Tuple[Dict[str, Tuple[str, Dict]]] = (root, {})
+	for hop in range(max_hop):
+		hop += 1
+		for e in hop_dict[hop]:
+			plist, tid, _ = e
+			trace = tree_dict[1]
+			parent = None
+			for p in plist[:-1]:
+				parent = trace[p][0]
+				trace = trace[p][1]
+			trace[plist[-1]] = (tid, {})
+	return tree_dict
+
+
+def tree_dict_to_adj(tree_dict: Tuple[str, Dict[str, Tuple[str, Dict]]]) -> List[Tuple[str, str, str]]:
+	# DFS to get all the connections used to construct adjacency matrix
+	adjs: List[Tuple[str, str, str]] = []
+	root = tree_dict[0]
+	for p in tree_dict[1]:
+		sub_tree_dict = tree_dict[1][p]
+		adjs.append((root, p, sub_tree_dict[0]))
+		adjs.extend(tree_dict_to_adj(sub_tree_dict))
+	return adjs
 
 
 def get_sub_properties(pid):

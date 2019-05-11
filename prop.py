@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 
 
+from typing import List, Tuple
 import argparse, json, os, time
 from collections import defaultdict
 from tqdm import tqdm
 import numpy as np
-from wikiutil.property import get_sub_properties, read_subprop_file, get_subtree, print_subtree, get_depth, \
+from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, print_subtree, get_depth, \
     hiro_subgraph_to_tree_dict, tree_dict_to_adj
 from wikiutil.wikidata_query_service import get_property_occurrence
 
@@ -33,40 +34,12 @@ def subprop(args):
     print('{} pairs'.format(num_pairs))
 
 
-def build_tree(args, use_return=False):
+def build_tree(args):
     subprops = read_subprop_file(args.inp)
-    num_prop = len(subprops)
-    print('{} props'.format(num_prop))
-
     # get pid to plabel dict
     pid2plabel = dict(p[0] for p in subprops)
-
-    # get parent link and children link
-    parent_dict = defaultdict(lambda: [])
-    child_dict = defaultdict(lambda: [])
-    for p in subprops:
-        parent_id = p[0][0]
-        child_dict[parent_id] = [c[0] for c in p[1]]
-        for c in p[1]:
-            parent_dict[c[0]].append(parent_id)
-
-    # construct tree for properties without parent
-    subtrees, isolate = [], []
-    for p in subprops:
-        pid = p[0][0]
-        if len(parent_dict[pid]) == 0:
-            subtree = get_subtree(pid, child_dict)
-            if len(subtree[1]) > 0:
-                subtrees.append(subtree)
-            else:
-                isolate.append(subtree)
-
-    print('{} subtree'.format(len(subtrees)))
-    print('avg depth: {}'.format(np.mean([get_depth(s) for s in subtrees])))
-    print('{} isolated prop'.format(len(isolate)))
-
-    if use_return:
-        return subtrees, isolate
+    # get all subtrees
+    subtrees, isolate = get_all_subtree(subprops)
 
     with open(args.out, 'w') as fout:
         fout.write('\n--- subtrees ---\n\n')
@@ -82,7 +55,7 @@ def prop_occur(args, only_isolate=True):
     num_prop = len(subprops)
     print('{} props'.format(num_prop))
 
-    _, isolate = build_tree(args, use_return=True)
+    _, isolate = get_all_subtree(subprops)
     isolate = set(iso[0] for iso in isolate)
 
     for prop in subprops:

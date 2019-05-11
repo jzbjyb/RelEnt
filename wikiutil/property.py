@@ -1,6 +1,8 @@
 from typing import List, Tuple, Dict
 from collections import defaultdict
+from itertools import combinations
 import subprocess
+import numpy as np
 
 
 def hiro_subgraph_to_tree_dict(root: str,
@@ -51,7 +53,18 @@ def get_sub_properties(pid):
 	return subs
 
 
-def read_subprop_file(filepath):
+def read_prop_occ_file(filepath, filter=False) -> List[Tuple[str, str]]:
+	result = []
+	with open(filepath, 'r') as fin:
+		for l in fin:
+			hid, _, tid, _ = l.strip().split('\t')
+			if filter and not hid.startswith('Q') or not tid.startswith('Q'):
+				continue
+			result.append((hid, tid))
+	return result
+
+
+def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
 	result: List[Tuple[Tuple[str, str], List[Tuple[str, str]]]] = []
 	with open(filepath, 'r') as fin:
 		for l in fin:
@@ -62,11 +75,53 @@ def read_subprop_file(filepath):
 	return result
 
 
-def get_subtree(root: str, child_dict: Dict[str, List[str]]):
+def get_subtree(root: str, child_dict: Dict[str, List[str]]) -> Tuple[str, List[Tuple[str, List]]]:
 	if root not in child_dict:
 		return (root, [])
 	result = (root, [get_subtree(c, child_dict) for c in child_dict[root]])
 	return result
+
+
+def get_is_sibling(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]):
+	is_sibling = set()
+	for p in subprops:
+		for p1, p2 in combinations(p[1], 2):
+			is_sibling.add((p1[0], p2[0]))
+			is_sibling.add((p2[0], p1[0]))
+	return is_sibling
+
+
+def get_all_subtree(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]) \
+		-> Tuple[List[Tuple[str, List[Tuple]]], List[Tuple[str, List[Tuple]]]]:
+	num_prop = len(subprops)
+	print('{} props'.format(num_prop))
+
+	# get parent link and children link
+	parent_dict = defaultdict(lambda: [])
+	child_dict = defaultdict(lambda: [])
+	for p in subprops:
+		parent_id = p[0][0]
+		child_dict[parent_id] = [c[0] for c in p[1]]
+		for c in p[1]:
+			parent_dict[c[0]].append(parent_id)
+
+	# construct tree for properties without parent
+	subtrees: List[Tuple[str, List[Tuple]]] = []
+	isolate: List[Tuple[str, List[Tuple]]] = []
+	for p in subprops:
+		pid = p[0][0]
+		if len(parent_dict[pid]) == 0:
+			subtree = get_subtree(pid, child_dict)
+			if len(subtree[1]) > 0:
+				subtrees.append(subtree)
+			else:
+				isolate.append(subtree)
+
+	print('{} subtree'.format(len(subtrees)))
+	print('avg depth: {}'.format(np.mean([get_depth(s) for s in subtrees])))
+	print('{} isolated prop'.format(len(isolate)))
+
+	return subtrees, isolate
 
 
 def get_depth(root: Tuple[str, List]) -> int:

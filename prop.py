@@ -7,7 +7,7 @@ from collections import defaultdict
 from tqdm import tqdm
 import numpy as np
 from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, print_subtree, get_depth, \
-    hiro_subgraph_to_tree_dict, tree_dict_to_adj
+    hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file
 from wikiutil.wikidata_query_service import get_property_occurrence
 
 def subprop(args):
@@ -101,9 +101,9 @@ def prop_entities(args):
                     non_rand_num += 1
                 else:
                     continue
+                occs = read_prop_occ_file(os.path.join(root, file), filter=True)
                 with open(os.path.join(root, file), 'r') as fin:
-                    for l in fin:
-                        hid, _, tid, _ = l.strip().split('\t')
+                    for hid, tid in occs:
                         if hid not in cache:
                             fout.write('{}\n'.format(hid))
                             cache.add(hid)

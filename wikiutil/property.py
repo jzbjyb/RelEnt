@@ -75,6 +75,30 @@ def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
 	return result
 
 
+def read_pointiwse_file(filepath) \
+		-> List[Tuple[Tuple[str, str, str], Tuple[str, str, str], int]]:
+	result = []
+	with open(filepath, 'r') as fin:
+		for l in fin:
+			label, p1o, p2o = l.strip().split('\t')
+			label = int(label)
+			p1, h1, t1 = p1o.split(' ')
+			p2, h2, t2 = p2o.split(' ')
+			result.append(((p1, h1, t1), (p2, h2, t2), label))
+	return result
+
+
+def read_subgraph_file(filepath) -> Dict[str, List[Tuple[str, str, str]]]:
+	result = {}
+	with open(filepath, 'r') as fin:
+		for l in fin:
+			l = l.strip().split('\t')
+			root = l[0]
+			adjs = [tuple(adj.split(' ')) for adj in l[1:]]
+			result[root] = adjs
+	return result
+
+
 def get_subtree(root: str, child_dict: Dict[str, List[str]]) -> Tuple[str, List[Tuple[str, List]]]:
 	if root not in child_dict:
 		return (root, [])

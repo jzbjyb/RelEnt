@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import argparse, random, os
 from tqdm import tqdm
 import numpy as np
@@ -13,18 +13,20 @@ from analogy.ggnn import GatedGraphNeuralNetwork, AdjacencyList
 
 
 def pointwise_batch_to_tensor(batch: List[PropertySubgraph], device) \
-        -> Tuple[List, torch.LongTensor]:
+        -> Tuple[Dict, torch.LongTensor]:
     ''' python data to pytorch data '''
-    data = []
-    labels = []
-    for sg1, sg2, label in batch:
-        e1 = torch.tensor(sg1.emb, dtype=torch.float).to(device)
-        e2 = torch.tensor(sg2.emb, dtype=torch.float).to(device)
-        adjs1 = AdjacencyList(node_num=len(sg1.adjs), adj_list=sg1.adjs, device=device)
-        adjs2 = AdjacencyList(node_num=len(sg2.adjs), adj_list=sg2.adjs, device=device)
-        data.append(((e1, adjs1), (e2, adjs2)))
-        labels.append(label)
-    return data, torch.LongTensor(labels)
+    packed_sg1, packed_sg2, labels = zip(*batch)
+    adjs12, e12, prop_ind12 = [], [], []
+    for packed_sg in [packed_sg1, packed_sg2]:
+        adjs, e, prop_ind = PropertySubgraph.pack_graphs(packed_sg)
+        adjs = AdjacencyList(node_num=len(adjs), adj_list=adjs, device=device)
+        e = torch.tensor(e, dtype=torch.float).to(device)
+        prop_ind = torch.tensor(prop_ind).to(device)
+        adjs12.append(adjs)
+        e12.append(e)
+        prop_ind12.append(prop_ind)
+    return {'adj': adjs12, 'emb': e12, 'prop_ind': prop_ind12}, \
+           torch.LongTensor(labels).to(device)
 
 
 class ModelWrapper(nn.Module):
@@ -38,24 +40,20 @@ class ModelWrapper(nn.Module):
         self.binary_cla = nn.Linear(hidden_size * 2, 1)
 
 
-    def forward(self, data: List, labels: torch.LongTensor):
-        g1s, g2s = [], []
-        for (g1e, g1_adj), (g2e, g2_adj) in data:
-            g1e = self.emb_proj(g1e)
-            g2e = self.emb_proj(g2e)
+    def forward(self, data: Dict, labels: torch.LongTensor):
+        ge_list = []
+        for i in range(2):
+            # get representation
+            ge = self.emb_proj(data['emb'][i])
             if self.method == 'ggnn':
-                g1pe = self.gnn.compute_node_representations(
-                    initial_node_representation=g1e, adjacency_lists=[g1_adj])[0]
-                g2pe = self.gnn.compute_node_representations(
-                    initial_node_representation=g2e, adjacency_lists=[g2_adj])[0]
-            elif self.method == 'emb':
-                g1pe = g1e[0]
-                g2pe = g2e[0]
-            g1s.append(g1pe)
-            g2s.append(g2pe)
-        g1s = torch.stack(g1s, 0)
-        g2s = torch.stack(g2s, 0)
-        logits = torch.sigmoid(self.binary_cla(torch.cat([g1s, g2s], -1)))
+                ge = self.gnn.compute_node_representations(
+                    initial_node_representation=ge, adjacency_lists=[data['adj'][i]])
+            # select
+            # SHAPE: (batch_size, emb_size)
+            ge = torch.index_select(ge, 0, data['prop_ind'][i])
+            ge_list.append(ge)
+        # match
+        logits = torch.sigmoid(self.binary_cla(torch.cat(ge_list, -1)))
         labels = labels.float()
         loss = nn.BCELoss()(logits.squeeze(), labels)
         return logits, loss

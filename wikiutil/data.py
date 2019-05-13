@@ -112,13 +112,18 @@ class PropertySubgraph():
             raise DataPrepError
         assert edge_type in {'one'}
         self.edge_type = edge_type
-        self.id2ind, self.adjs, self.emb = self._to_gnn_input(emb_dict, emb_size)
+        self.id2ind, self.adjs, self.emb, self.prop_ind = self._to_gnn_input(emb_dict, emb_size)
+
+
+    @property
+    def size(self):
+        return len(self.id2ind)
 
 
     def _to_gnn_input(self,
                      emb_dict: Dict[str, List[float]] = None,
                      emb_size: int = None):
-        ''' convert to gnn input format (adjacency list and input emb) '''
+        ''' convert to gnn input format (adjacency list, input emb, and prop index) '''
 
         if self.edge_type == 'one':
             # build adj list
@@ -145,8 +150,26 @@ class PropertySubgraph():
             else:
                 emb = np.random.normal(0, 0.1, (len(id2ind), emb_size))
 
-            return id2ind, adjs, emb
+            return id2ind, adjs, emb, [0]
 
+
+    @staticmethod
+    def pack_graphs(graphs: List):
+        ''' convert to gnn input format (adjacency list, input emb, and prop index) '''
+        if len(graphs) == 0:
+            raise Exception
+        edge_type = graphs[0].edge_type
+        if edge_type == 'one':
+            new_adjs, new_emb, new_prop_ind = [], [], []
+            acc = 0
+            for g in graphs:
+                for adj in g.adjs:
+                    new_adjs.append((adj[0] + acc, adj[1] + acc))
+                new_emb.append(g.emb)
+                new_prop_ind.append(acc)
+                acc += g.size
+            new_emb = np.concatenate(new_emb, axis=0)
+            return new_adjs, new_emb, new_prop_ind
 
 
 class PointwiseDataLoader():

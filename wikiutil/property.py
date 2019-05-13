@@ -85,7 +85,7 @@ def read_pointiwse_file(filepath) \
 			label = int(label)
 			p1, h1, t1 = p1o.split(' ')
 			p2, h2, t2 = p2o.split(' ')
-			result.append(((p1, h1, t1), (p2, h2, t2), label))
+			result.append(((h1, p1, t1), (h2, p2, t2), label))
 	return result
 
 

@@ -1,5 +1,5 @@
 from typing import Tuple, List, Any, Dict
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from random import shuffle
 from tqdm import tqdm
 import numpy as np
@@ -90,6 +90,62 @@ def filter_prop_occ_by_subgraph_and_emb(prop: str,
     return filtered
 
 
+class PropertySubgraph():
+    def __init__(self,
+                 property_id: str,
+                 head_id: str,
+                 tail_id: str,
+                 subgraph_dict: Dict[str, List[Tuple[str, str, str]]],
+                 emb_dict: Dict[str, List[float]] = None,
+                 emb_size: int = None,
+                 edge_type: str = 'one'):
+        self.pid = property_id
+        self.hid = head_id
+        self.tid = tail_id
+        try:
+            self.hsg: List[Tuple[str, str, str]] = subgraph_dict[head_id]
+            self.tsg: List[Tuple[str, str, str]] = subgraph_dict[tail_id]
+        except KeyError:
+            raise DataPrepError
+        assert edge_type in {'one'}
+        self.edge_type = edge_type
+        self.id2ind, self.adjs, self.emb = self._to_gnn_input(emb_dict, emb_size)
+
+
+    def _to_gnn_input(self,
+                     emb_dict: Dict[str, List[float]] = None,
+                     emb_size: int = None):
+        ''' convert to gnn input format (adjacency list and input emb) '''
+
+        if self.edge_type == 'one':
+            # build adj list
+            id2ind = defaultdict(lambda: len(id2ind))  # entity/proerty id to index mapping
+            _ = id2ind[self.pid]  # make sure that the central property is alway indexed as 0
+            adjs = []
+            adjs.append((id2ind[self.hid], id2ind[self.pid]))
+            adjs.append((id2ind[self.pid], id2ind[self.tid]))
+            for two_side in [self.hsg, self.tsg]:
+                for e1, p, e2 in two_side:
+                    e1 = id2ind[e1]
+                    p = id2ind[p]
+                    e2 = id2ind[e2]
+                    adjs.append((e1, p))
+                    adjs.append((p, e2))
+
+            # build emb
+            ind2id = dict((v, k) for k, v in id2ind.items())
+            if emb_dict is not None:
+                try:
+                    emb = np.array([emb_dict[ind2id[i]] for i in range(len(id2ind))])
+                except KeyError:
+                    raise DataPrepError
+            else:
+                emb = np.random.normal(0, 0.1, (len(id2ind), emb_size))
+
+            return id2ind, adjs, emb
+
+
+
 class PointwiseDataLoader():
     def __init__(self,
                  train_file: str,
@@ -113,8 +169,7 @@ class PointwiseDataLoader():
             self.emb_dict = load_embedding(emb_file)
         print('prep data ...')
         self.all_ids = set()  # all the entity ids and property ids used
-        self._subgraph_init_emb_cache = {}  # cache init emb for subgraphs
-        self._subgraph_cache = {}  # cache subgraphs
+        self._subgraph_cache: Dict[Tuple[str, str, str], PropertySubgraph] = {}  # cache subgraphs
         self.train_graph = self.create_pointwise_samples(self.train_list)
         print('train {} -> {}'.format(len(self.train_list), len(self.train_graph)))
         self.dev_graph = self.create_pointwise_samples(self.dev_list)
@@ -134,62 +189,23 @@ class PointwiseDataLoader():
     def create_pointwise_samples(self, data: List):
         result = []
         for sample in tqdm(data):
-            sample = self.create_one_pointwise_sample(*sample)
+            p1o, p2o, label = sample
+            sample = (self.create_subgraph(p1o), self.create_subgraph(p2o), label)
             result.append(sample)
         return result
 
 
-    def create_one_pointwise_sample(self,
-                          property_occ1: Tuple[str, str, str],
-                          property_occ2: Tuple[str, str, str],
-                          label: int):
-        return self.create_subgraph(property_occ1), self.create_subgraph(property_occ2), label
+    def create_subgraph(self, property_occ: Tuple[str, str, str]) -> PropertySubgraph:
+        hid, pid, tid = property_occ
 
+        if property_occ not in self._subgraph_cache:
+            self._subgraph_cache[property_occ] = PropertySubgraph(
+                pid, hid, tid, self.subgraph_dict, self.emb_dict, self.emb_size, self.edge_type)
 
-    def create_subgraph(self, property_occ: Tuple[str, str, str]) \
-            -> Tuple[np.ndarray, List]:  # return init emb and adj list
-        pid, hid, tid = property_occ
+        sg = self._subgraph_cache[property_occ]
+        self.all_ids |= sg.id2ind.keys()
 
-        # subgraph not exist
-        if hid not in self.subgraph_dict or tid not in self.subgraph_dict:
-            raise DataPrepError
-
-        # build emb and adj list
-        if self.edge_type == 'one':
-            # build adj list
-            if property_occ in self._subgraph_cache:
-                adj_list, id2ind = self._subgraph_cache[property_occ]
-            else:
-                id2ind = defaultdict(lambda: len(id2ind))  # entity/proerty id to index mapping
-                _ = id2ind[pid]  # make sure that the central property is alway indexed as 0
-                adj_list = []
-                adj_list.extend([(id2ind[hid], id2ind[pid]), (id2ind[pid], id2ind[tid])])
-                for two_side in [hid, tid]:
-                    for e1, p, e2 in self.subgraph_dict[two_side]:
-                        e1 = id2ind[e1]
-                        p = id2ind[p]
-                        e2 = id2ind[e2]
-                        adj_list.append((e1, p))
-                        adj_list.append((p, e2))
-                # collect all ids
-                self.all_ids |= id2ind.keys()
-                self._subgraph_cache[property_occ] = (adj_list, id2ind)
-
-            # build emb
-            if property_occ in self._subgraph_init_emb_cache:
-                emb = self._subgraph_init_emb_cache[property_occ]
-            else:
-                ind2id = dict((v, k) for k, v in id2ind.items())
-                if hasattr(self, 'emb_dict'):
-                    try:
-                        emb = np.array([self.emb_dict[ind2id[i]] for i in range(len(id2ind))])
-                    except KeyError as e:
-                        raise DataPrepError
-                else:
-                    emb = np.ones((len(id2ind), self.emb_size))
-                self._subgraph_init_emb_cache[property_occ] = emb
-
-        return emb, adj_list
+        return sg
 
 
     def renew_data_iter(self, split='train'):

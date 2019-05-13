@@ -2,25 +2,26 @@
 
 
 from typing import List, Tuple
-import argparse, random
+import argparse, random, os
 from tqdm import tqdm
 import numpy as np
 import torch
 import torch.nn as nn
-from wikiutil.data import PointwiseDataLoader, filer_embedding
+from wikiutil.data import PointwiseDataLoader, PropertySubgraph, filer_embedding
 from analogy.ggnn import GatedGraphNeuralNetwork, AdjacencyList
 
 
-def pointwise_batch_to_tensor(batch: List, device) -> Tuple[List, torch.LongTensor]:
+def pointwise_batch_to_tensor(batch: List[PropertySubgraph], device) \
+        -> Tuple[List, torch.LongTensor]:
     ''' python data to pytorch data '''
     data = []
     labels = []
-    for (g1e, g1), (g2e, g2), label in batch:
-        g1e = torch.tensor(g1e, dtype=torch.float).to(device)
-        g2e = torch.tensor(g2e, dtype=torch.float).to(device)
-        g1_adj = AdjacencyList(node_num=len(g1), adj_list=g1, device=device)
-        g2_adj = AdjacencyList(node_num=len(g2), adj_list=g2, device=device)
-        data.append(((g1e, g1_adj), (g2e, g2_adj)))
+    for sg1, sg2, label in batch:
+        e1 = torch.tensor(sg1.emb, dtype=torch.float).to(device)
+        e2 = torch.tensor(sg2.emb, dtype=torch.float).to(device)
+        adjs1 = AdjacencyList(node_num=len(sg1.adjs), adj_list=sg1.adjs, device=device)
+        adjs2 = AdjacencyList(node_num=len(sg2.adjs), adj_list=sg2.adjs, device=device)
+        data.append(((e1, adjs1), (e2, adjs2)))
         labels.append(label)
     return data, torch.LongTensor(labels)
 
@@ -61,9 +62,7 @@ class ModelWrapper(nn.Module):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('train analogy model')
-    parser.add_argument('--train_file', type=str, required=True, help='training data file')
-    parser.add_argument('--dev_file', type=str, required=True, help='dev data file')
-    parser.add_argument('--test_file', type=str, required=True, help='test data file')
+    parser.add_argument('--dataset_dir', type=str, required=True, help='dataset dir')
     parser.add_argument('--subgraph_file', type=str, required=True, help='entity subgraph file')
     parser.add_argument('--emb_file', type=str, default=None, help='embedding file')
     parser.add_argument('--no_cuda', action='store_true')
@@ -78,9 +77,9 @@ if __name__ == '__main__':
     else:
         device = torch.device('cuda')
 
-    dataloader = PointwiseDataLoader(args.train_file,
-                                     args.dev_file,
-                                     args.test_file,
+    dataloader = PointwiseDataLoader(os.path.join(args.dataset_dir, 'train.pointwise'),
+                                     os.path.join(args.dataset_dir, 'dev.pointwise'),
+                                     os.path.join(args.dataset_dir, 'test.pointwise'),
                                      args.subgraph_file,
                                      emb_file=args.emb_file,
                                      edge_type='one')

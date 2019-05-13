@@ -10,6 +10,29 @@ class DataPrepError(Exception):
     pass
 
 
+def save_emb_ids(filepath, out_filepath):
+    result = set()
+    with open(filepath, 'r') as fin, open(out_filepath, 'w') as fout:
+        for l in tqdm(fin):
+            l = l.split('\t', 1)
+            id = l[0]
+            result.add(id)
+            fout.write(id + '\n')
+
+
+def read_emb_ids(filepath) -> set:
+    print('load emb ids ...')
+    result = set()
+    with open(filepath, 'r') as fin:
+        for id in tqdm(fin):
+            id = id.strip()
+            if id.startswith('<http://www.wikidata.org/entity/') or \
+                    id.startswith('<http://www.wikidata.org/prop/direct/'):
+                id = id.rsplit('/', 1)[1][:-1]
+                result.add(id)
+    return result
+
+
 def load_embedding(filepath) -> Dict[str, List[float]]:
     print('load emb ...')
     result = {}
@@ -39,6 +62,34 @@ def filer_embedding(in_filepath: str,
             fout.write(id + '\t' + ls[1])
 
 
+def filter_prop_occ_by_subgraph_and_emb(prop: str,
+                                        prop_occs: List[Tuple[str, str]],
+                                        subgraph_dict: Dict,
+                                        emb_set: set):
+    ''' filter out property occurrence without subgraph or embedding '''
+    filtered = []
+    # emb check
+    if prop not in emb_set:
+        return filtered
+    for occ in prop_occs:
+        hid, tid = occ
+        # subgraph check
+        if hid not in subgraph_dict or tid not in subgraph_dict:
+            continue
+        # emb check
+        try:
+            if hid not in emb_set or tid not in emb_set:
+                raise KeyError
+            for two_side in [hid, tid]:
+                for e1, p, e2 in subgraph_dict[two_side]:
+                    if e1 not in emb_set or p not in emb_set or e2 not in emb_set:
+                        raise KeyError
+        except KeyError:
+            continue
+        filtered.append(occ)
+    return filtered
+
+
 class PointwiseDataLoader():
     def __init__(self,
                  train_file: str,
@@ -50,7 +101,7 @@ class PointwiseDataLoader():
                  edge_type: str = 'one'):
         print('load data ...')
         self.train_list = read_pointiwse_file(train_file)
-        self.train_list = self.pos_neg_filter(self.train_list, neg_ratio=5)  # TODO: neg_ratio param
+        self.train_list = self.pos_neg_filter(self.train_list, neg_ratio=5)  # TODO: add neg_ratio param
         self.dev_list = read_pointiwse_file(dev_file)
         self.test_list = read_pointiwse_file(test_file)
         self.subgraph_dict = read_subgraph_file(subgraph_file)
@@ -62,30 +113,14 @@ class PointwiseDataLoader():
             self.emb_dict = load_embedding(emb_file)
         print('prep data ...')
         self.all_ids = set()  # all the entity ids and property ids used
+        self._subgraph_init_emb_cache = {}  # cache init emb for subgraphs
+        self._subgraph_cache = {}  # cache subgraphs
         self.train_graph = self.create_pointwise_samples(self.train_list)
         print('train {} -> {}'.format(len(self.train_list), len(self.train_graph)))
         self.dev_graph = self.create_pointwise_samples(self.dev_list)
         print('dev {} -> {}'.format(len(self.dev_list), len(self.dev_graph)))
         self.test_graph = self.create_pointwise_samples(self.test_list)
         print('test {} -> {}'.format(len(self.test_list), len(self.test_graph)))
-
-
-    def create_pointwise_samples(self, data: List):
-        result = []
-        for sample in tqdm(data):
-            try:
-                sample = self.create_one_pointwise_sample(*sample)
-                result.append(sample)
-            except DataPrepError:
-                continue
-        return result
-
-
-    def create_one_pointwise_sample(self,
-                          property_occ1: Tuple[str, str, str],
-                          property_occ2: Tuple[str, str, str],
-                          label: int):
-        return self.create_subgraph(property_occ1), self.create_subgraph(property_occ2), label
 
 
     def pos_neg_filter(self, samples: List[Tuple[Any, Any, int]], neg_ratio: int = 3):
@@ -96,11 +131,24 @@ class PointwiseDataLoader():
         return pos + neg[:len(pos) * neg_ratio]
 
 
+    def create_pointwise_samples(self, data: List):
+        result = []
+        for sample in tqdm(data):
+            sample = self.create_one_pointwise_sample(*sample)
+            result.append(sample)
+        return result
+
+
+    def create_one_pointwise_sample(self,
+                          property_occ1: Tuple[str, str, str],
+                          property_occ2: Tuple[str, str, str],
+                          label: int):
+        return self.create_subgraph(property_occ1), self.create_subgraph(property_occ2), label
+
+
     def create_subgraph(self, property_occ: Tuple[str, str, str]) \
             -> Tuple[np.ndarray, List]:  # return init emb and adj list
-        id2ind = defaultdict(lambda: len(id2ind))  # entity/proerty id to index mapping
         pid, hid, tid = property_occ
-        _ = id2ind[pid]  # make sure that the central property is alway indexed as 0
 
         # subgraph not exist
         if hid not in self.subgraph_dict or tid not in self.subgraph_dict:
@@ -108,26 +156,39 @@ class PointwiseDataLoader():
 
         # build emb and adj list
         if self.edge_type == 'one':
-            adj_list = []
-            adj_list.extend([(id2ind[hid], id2ind[pid]), (id2ind[pid], id2ind[tid])])
-            for two_side in [hid, tid]:
-                for e1, p, e2 in self.subgraph_dict[two_side]:
-                    e1 = id2ind[e1]
-                    p = id2ind[p]
-                    e2 = id2ind[e2]
-                    adj_list.append((e1, p))
-                    adj_list.append((p, e2))
-            ind2id = dict((v, k) for k, v in id2ind.items())
-            if hasattr(self, 'emb_dict'):
-                try:
-                    emb = np.array([self.emb_dict[ind2id[i]] for i in range(len(id2ind))])
-                except KeyError:
-                    raise DataPrepError
+            # build adj list
+            if property_occ in self._subgraph_cache:
+                adj_list, id2ind = self._subgraph_cache[property_occ]
             else:
-                emb = np.ones((len(id2ind), self.emb_size))
+                id2ind = defaultdict(lambda: len(id2ind))  # entity/proerty id to index mapping
+                _ = id2ind[pid]  # make sure that the central property is alway indexed as 0
+                adj_list = []
+                adj_list.extend([(id2ind[hid], id2ind[pid]), (id2ind[pid], id2ind[tid])])
+                for two_side in [hid, tid]:
+                    for e1, p, e2 in self.subgraph_dict[two_side]:
+                        e1 = id2ind[e1]
+                        p = id2ind[p]
+                        e2 = id2ind[e2]
+                        adj_list.append((e1, p))
+                        adj_list.append((p, e2))
+                # collect all ids
+                self.all_ids |= id2ind.keys()
+                self._subgraph_cache[property_occ] = (adj_list, id2ind)
 
-        # collect all ids
-        self.all_ids |= id2ind.keys()
+            # build emb
+            if property_occ in self._subgraph_init_emb_cache:
+                emb = self._subgraph_init_emb_cache[property_occ]
+            else:
+                ind2id = dict((v, k) for k, v in id2ind.items())
+                if hasattr(self, 'emb_dict'):
+                    try:
+                        emb = np.array([self.emb_dict[ind2id[i]] for i in range(len(id2ind))])
+                    except KeyError as e:
+                        raise DataPrepError
+                else:
+                    emb = np.ones((len(id2ind), self.emb_size))
+                self._subgraph_init_emb_cache[property_occ] = emb
+
         return emb, adj_list
 
 

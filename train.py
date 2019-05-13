@@ -11,7 +11,7 @@ from wikiutil.data import PointwiseDataLoader, filer_embedding
 from analogy.ggnn import GatedGraphNeuralNetwork, AdjacencyList
 
 
-def batch_to_tensor(batch: List, device) -> Tuple[List, torch.LongTensor]:
+def pointwise_batch_to_tensor(batch: List, device) -> Tuple[List, torch.LongTensor]:
     ''' python data to pytorch data '''
     data = []
     labels = []
@@ -56,7 +56,7 @@ class ModelWrapper(nn.Module):
         logits = torch.sigmoid(self.binary_cla(torch.cat([g1s, g2s], -1)))
         labels = labels.float()
         loss = nn.BCELoss()(logits.squeeze(), labels)
-        return loss
+        return logits, loss
 
 
 if __name__ == '__main__':
@@ -87,17 +87,17 @@ if __name__ == '__main__':
 
     # filter emb
     print('#ids {}'.format(len(dataloader.all_ids)))
-    #filer_embedding(args.emb_file, 'test.emb', dataloader.all_ids)
+    #filer_embedding(args.emb_file, 'data/test.emb', dataloader.all_ids)
 
     model = ModelWrapper(emb_size=200, hidden_size=32, method='emb')
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 
-    for epoch in range(5):
+    for epoch in range(20):
         train_loss = []
         model.train()
-        for batch in tqdm(dataloader.batch_iter('train', batch_size=64, batch_per_epoch=1000, repeat=True)):
-            loss = model(*batch_to_tensor(batch, device))
+        for batch in tqdm(dataloader.batch_iter('train', batch_size=64, batch_per_epoch=200, repeat=True)):
+            logits, loss = model(*pointwise_batch_to_tensor(batch, device))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -106,7 +106,7 @@ if __name__ == '__main__':
         dev_loss = []
         model.eval()
         for batch in tqdm(dataloader.batch_iter('dev', batch_size=64, restart=True)):
-            loss = model(*batch_to_tensor(batch, device))
+            logits, loss = model(*pointwise_batch_to_tensor(batch, device))
             dev_loss.append(loss.item())
 
         print(np.mean(train_loss), np.mean(dev_loss))

@@ -1,7 +1,7 @@
 from typing import List, Tuple, Dict
 from collections import defaultdict
 from itertools import combinations
-import subprocess
+import subprocess, re
 import numpy as np
 
 
@@ -58,7 +58,8 @@ def read_prop_occ_file(filepath, filter=False) -> List[Tuple[str, str]]:
 	with open(filepath, 'r') as fin:
 		for l in fin:
 			hid, _, tid, _ = l.strip().split('\t')
-			if filter and not hid.startswith('Q') or not tid.startswith('Q'):
+			if filter and not re.match('^Q[0-9]+$', hid) or not re.match('^Q[0-9]+$', tid):
+				# only keep entities
 				continue
 			result.append((hid, tid))
 	return result

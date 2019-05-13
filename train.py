@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from wikiutil.data import PointwiseDataLoader, PropertySubgraph, filer_embedding
+from wikiutil.metric import AnalogyEval
 from analogy.ggnn import GatedGraphNeuralNetwork, AdjacencyList
 
 
@@ -64,6 +65,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('train analogy model')
     parser.add_argument('--dataset_dir', type=str, required=True, help='dataset dir')
     parser.add_argument('--subgraph_file', type=str, required=True, help='entity subgraph file')
+    parser.add_argument('--subprop_file', type=str, required=True, help='subprop file')
     parser.add_argument('--emb_file', type=str, default=None, help='embedding file')
     parser.add_argument('--no_cuda', action='store_true')
     args = parser.parse_args()
@@ -91,6 +93,7 @@ if __name__ == '__main__':
     model = ModelWrapper(emb_size=200, hidden_size=32, method='emb')
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+    metric = AnalogyEval(args.subprop_file, method='accuracy', reduction='property')
 
     for epoch in range(20):
         train_loss = []
@@ -102,10 +105,11 @@ if __name__ == '__main__':
             optimizer.step()
             train_loss.append(loss.item())
 
-        dev_loss = []
+        dev_loss, dev_result = [], []
         model.eval()
         for batch in tqdm(dataloader.batch_iter('dev', batch_size=64, restart=True)):
             logits, loss = model(*pointwise_batch_to_tensor(batch, device))
             dev_loss.append(loss.item())
+            dev_result.extend([(g1.pid, g2.pid, logits[i].item()) for i, (g1, g2, label) in enumerate(batch)])
 
-        print(np.mean(train_loss), np.mean(dev_loss))
+        print(np.mean(train_loss), np.mean(dev_loss), metric.eval(dev_result))

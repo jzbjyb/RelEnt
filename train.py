@@ -97,10 +97,10 @@ if __name__ == '__main__':
     model = ModelWrapper(emb_size=200, hidden_size=32, method='emb')
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-    metric = AnalogyEval(args.subprop_file, method='accuracy', reduction='property')
+    metric = AnalogyEval(args.subprop_file, method='accuracy', reduction='sample')
 
     for epoch in range(20):
-        train_loss = []
+        train_loss, train_result = [], []
         model.train()
         for batch in tqdm(dataloader.batch_iter('train', batch_size=64, batch_per_epoch=200, repeat=True)):
             logits, loss = model(*pointwise_batch_to_tensor(batch, device))
@@ -108,6 +108,7 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
             train_loss.append(loss.item())
+            train_result.extend([(g1.pid, g2.pid, logits[i].item()) for i, (g1, g2, label) in enumerate(batch)])
 
         dev_loss, dev_result = [], []
         model.eval()
@@ -116,4 +117,4 @@ if __name__ == '__main__':
             dev_loss.append(loss.item())
             dev_result.extend([(g1.pid, g2.pid, logits[i].item()) for i, (g1, g2, label) in enumerate(batch)])
 
-        print(np.mean(train_loss), np.mean(dev_loss), metric.eval(dev_result))
+        print(np.mean(train_loss), np.mean(dev_loss), metric.eval(train_result), metric.eval(dev_result))

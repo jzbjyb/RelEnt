@@ -40,6 +40,17 @@ class AnalogyEval():
         return correct / (correct + wrong + 1e-10)
 
 
+    def sample_accuracy(self, predictions: List[Tuple[str, str, float]]):
+        correct, wrong = 0, 0
+        for prop1, prop2, p in predictions:
+            if (p >= 0.5 and (prop1, prop2) in self.is_sibling) or \
+                    (p < 0.5 and (prop1, prop2) not in self.is_sibling):
+                correct += 1
+            else:
+                wrong += 1
+        return correct / (correct + wrong + 1e-10)
+
+
     def eval(self, predictions: List[Tuple[str, str, float]]):
         '''
         evaluate the predictions,

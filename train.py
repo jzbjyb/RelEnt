@@ -68,6 +68,7 @@ if __name__ == '__main__':
     parser.add_argument('--subprop_file', type=str, required=True, help='subprop file')
     parser.add_argument('--emb_file', type=str, default=None, help='embedding file')
     parser.add_argument('--no_cuda', action='store_true')
+    parser.add_argument('--filter_emb', action='store_true')
     args = parser.parse_args()
 
     random.seed(2019)
@@ -83,12 +84,15 @@ if __name__ == '__main__':
                                      os.path.join(args.dataset_dir, 'dev.pointwise'),
                                      os.path.join(args.dataset_dir, 'test.pointwise'),
                                      args.subgraph_file,
-                                     emb_file=args.emb_file,
+                                     emb_file=args.emb_file if not args.filter_emb else None,
+                                     emb_size=None if not args.filter_emb else 32,
                                      edge_type='one')
 
     # filter emb
     print('#ids {}'.format(len(dataloader.all_ids)))
-    #filer_embedding(args.emb_file, 'data/test.emb', dataloader.all_ids)
+    if args.filter_emb:
+        filer_embedding(args.emb_file, 'data/test.emb', dataloader.all_ids)
+        exit(1)
 
     model = ModelWrapper(emb_size=200, hidden_size=32, method='emb')
     model.to(device)

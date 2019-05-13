@@ -168,8 +168,7 @@ class PointwiseDataLoader():
         # 'one' means only use a single type of edge to link properties and entities
         self.edge_type = edge_type
         self.emb_size = emb_size
-        if emb_file:
-            self.emb_dict = load_embedding(emb_file)
+        self.emb_dict = load_embedding(emb_file) if emb_file else None
         print('prep data ...')
         self.all_ids = set()  # all the entity ids and property ids used
         self._subgraph_cache: Dict[Tuple[str, str, str], PropertySubgraph] = {}  # cache subgraphs

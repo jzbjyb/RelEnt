@@ -48,6 +48,13 @@ if __name__ == '__main__':
     parser.add_argument('--method', type=str, default='by_tree', choices=['by_tree', 'within_tree'])
     args = parser.parse_args()
 
+    '''
+    python prep_data.py --prop_file data/subprops.txt --prop_dir data/property_occurrence_subtree/ \
+        --subgraph_file data/property_occurrence_subtree.subgraph \
+        --emb_file ~/tir1/data/wikidata/wikidata_translation_v1.tsv.id.QP \
+        --out_dir data/analogy_dataset/test/ --method within_tree
+    '''
+
     random.seed(2019)
     np.random.seed(2019)
 
@@ -130,6 +137,9 @@ if __name__ == '__main__':
             occs = filter_prop_occ_by_subgraph_and_emb(p, occs, subgraph_dict, emb_set)  # check existence
             occs = np.random.permutation(occs)[:args.max_occ_per_prop]
             p2occs[p] = occs
+
+        print('{} out of {} property has no occurrence'.format(
+            len([p for p in p2occs if len(p2occs[p]) == 0]), len(p2occs)))
 
         def get_all_pairs(p1, p2):
             for p1o in p2occs[p1]:

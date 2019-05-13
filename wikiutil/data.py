@@ -20,15 +20,18 @@ def save_emb_ids(filepath, out_filepath):
             fout.write(id + '\n')
 
 
-def read_emb_ids(filepath) -> set:
+def read_emb_ids(filepath, filter=False) -> set:
     print('load emb ids ...')
     result = set()
     with open(filepath, 'r') as fin:
         for id in tqdm(fin):
             id = id.strip()
-            if id.startswith('<http://www.wikidata.org/entity/') or \
-                    id.startswith('<http://www.wikidata.org/prop/direct/'):
-                id = id.rsplit('/', 1)[1][:-1]
+            if filter:
+                if id.startswith('<http://www.wikidata.org/entity/') or \
+                        id.startswith('<http://www.wikidata.org/prop/direct/'):
+                    id = id.rsplit('/', 1)[1][:-1]
+                    result.add(id)
+            else:
                 result.add(id)
     return result
 
@@ -254,4 +257,7 @@ class PointwiseDataLoader():
                     self.renew_data_iter(split)
                     iterator = self.get_data_iter(split)
                 else:
+                    if len(samples) > 0:
+                        yield samples
+                        samples = []
                     break

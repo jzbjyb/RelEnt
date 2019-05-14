@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 
 
-from typing import Dict
+from typing import Dict, Tuple
 from collections import defaultdict
+from random import shuffle
 import argparse, os, random
 from itertools import combinations
 from tqdm import tqdm
@@ -18,19 +19,24 @@ def traverse_subtree(subtree):
         yield from traverse_subtree(c)
 
 
-def split_within_subtree(subtree, tr, dev, te):
+def split_within_subtree(subtree, tr, dev, te, filter_set: set = None):
     ''' split the subtree by spliting each tir into train/dev/test set '''
     siblings = [c[0] for c in subtree[1]]
+    shuffle(siblings)
     tr = int(len(siblings) * tr)
     dev = int(len(siblings) * dev)
     te = len(siblings) - tr - dev
     test = siblings[tr + dev:]
     dev = siblings[tr:tr + dev]
     train = siblings[:tr]
+    if filter_set:
+        train = list(set(train) & filter_set)
+        dev = list(set(dev) & filter_set)
+        test = list(set(test) & filter_set)
     if len(train) > 0 and len(dev) > 0 and len(test) > 0:
         yield train, dev, test
     for c in subtree[1]:
-        split_within_subtree(c, tr, dev, te)
+        split_within_subtree(c, tr, dev, te, filter_set=filter_set)
 
 
 if __name__ == '__main__':
@@ -66,13 +72,29 @@ if __name__ == '__main__':
 
     prop2treeid = dict((p, i) for i, subtree in enumerate(subtrees) for p in traverse_subtree(subtree))
 
-    # all the property ids that have been crawled
+    ## all the property ids that have been crawled
     all_propids = set()
     for root, dirs, files in os.walk(args.prop_dir):
         for file in files:
             if file.endswith('.txt') or file.endswith('.txt.order'):  # also use order file
                 all_propids.add(file.split('.', 1)[0])
 
+    ## load subgraph and emb for existence check
+    subgraph_dict = read_subgraph_file(args.subgraph_file)
+    #save_emb_ids(args.emb_file, args.emb_file + '.id')
+    emb_set = read_emb_ids(args.emb_file)
+    p2occs: Dict[str, Tuple] = {}
+    for p in all_propids:
+        occs = read_prop_occ_file_from_dir(p, args.prop_dir, filter=True, use_order=True)
+        occs = filter_prop_occ_by_subgraph_and_emb(p, occs, subgraph_dict, emb_set)  # check existence
+        if len(occs) == 0:
+            continue  # skip empty property
+        occs = np.random.permutation(occs)[:args.max_occ_per_prop]
+        p2occs[p] = occs
+    print('{} out of {} property pass existence check'.format(len(p2occs), len(all_propids)))
+    all_propids &= set(p2occs.keys())
+
+    ## split train/dev/test
     tr, dev, te = list(map(float, args.train_dev_test.split(':')))
 
     if args.method == 'by_tree':
@@ -87,12 +109,9 @@ if __name__ == '__main__':
         train_subtrees = subtrees[:tr]
 
         # avoid overlap between subtrees
-        test_prop = [p for t in test_subtrees for p in traverse_subtree(t)
-                     if p in all_propids]
-        dev_prop = [p for t in dev_subtrees for p in traverse_subtree(t)
-                    if p in all_propids and p not in test_prop]
-        train_prop = [p for t in train_subtrees for p in traverse_subtree(t)
-                      if p in all_propids and p not in dev_prop and p not in test_prop]
+        test_prop = [p for t in test_subtrees for p in traverse_subtree(t) if p in all_propids]
+        dev_prop = [p for t in dev_subtrees for p in traverse_subtree(t) if p in all_propids]
+        train_prop = [p for t in train_subtrees for p in traverse_subtree(t) if p in all_propids]
 
         print('totally {} subtrees, train {} /dev {} /test {}'.format(
             len(subtrees), len(train_subtrees), len(dev_subtrees), len(test_subtrees)))
@@ -108,46 +127,30 @@ if __name__ == '__main__':
         # split each tir in a subtree into train/dev/test
         train_prop, dev_prop, test_prop = [], [], []
         for subtree in subtrees:
-            for train_p, dev_p, test_p in split_within_subtree(subtree, tr, dev, te):
-                train_prop.extend([p for p in train_p if p in all_propids])
-                dev_prop.extend([p for p in dev_p if p in all_propids])
-                test_prop.extend([p for p in test_p if p in all_propids])
+            for train_p, dev_p, test_p in split_within_subtree(subtree, tr, dev, te, filter_set=all_propids):
+                train_prop.extend(train_p)
+                dev_prop.extend(dev_p)
+                test_prop.extend(test_p)
 
-    # remove duplicates
-    train_prop = list(set(train_prop))
-    dev_prop = list(set(dev_prop))
+    # remove duplicates and avoid overlap
     test_prop = list(set(test_prop))
-    print('totally {} properties, inititally train {} /dev {} /test {}'.format(
+    dev_prop = list(set(dev_prop) - set(test_prop))
+    train_prop = list(set(train_prop) - set(dev_prop) - set(test_prop))
+    print('totally {} properties, train {} /dev {} /test {}'.format(
         len(all_propids), len(train_prop), len(dev_prop), len(test_prop)))
 
-    # load subgraph and emb for existence check
-    subgraph_dict = read_subgraph_file(args.subgraph_file)
-    #save_emb_ids(args.emb_file, args.emb_file + '.id')
-    emb_set = read_emb_ids(args.emb_file)
-
-    # get multiple occurrence for each property
+    ## get multiple occurrence for each property
     is_sibling = get_is_sibling(subprops)
     final_prop_split: Dict[str, str] = defaultdict(lambda: '*')
     for prop_split_name in ['train_prop', 'dev_prop', 'test_prop']:
         prop_split = eval(prop_split_name)
 
-        p2occs = {}
-        for p in prop_split:
-            occs = read_prop_occ_file_from_dir(p, args.prop_dir, filter=True, use_order=True)
-            occs = filter_prop_occ_by_subgraph_and_emb(p, occs, subgraph_dict, emb_set)  # check existence
-            if len(occs) == 0:
-                continue  # skip empty property
-            occs = np.random.permutation(occs)[:args.max_occ_per_prop]
-            p2occs[p] = occs
-
-        print('{} out of {} property pass existence check'.format(len(p2occs), len(prop_split)))
-
         # save properties for this split
         with open(os.path.join(args.out_dir, '.'.join(prop_split_name.split('_'))), 'w') as fout:
-            fout.write('\n'.join(map(lambda x: '\t'.join(x), [(p, pid2plabel[p]) for p in p2occs])) + '\n')
+            fout.write('\n'.join(map(lambda x: '\t'.join(x), [(p, pid2plabel[p]) for p in prop_split])) + '\n')
 
         # save to final split
-        for p in p2occs:
+        for p in prop_split:
             final_prop_split[p] = prop_split_name
 
         def get_all_pairs(p1, p2):
@@ -159,7 +162,7 @@ if __name__ == '__main__':
         data_filename = os.path.join(args.out_dir, prop_split_name.split('_')[0] + '.pointwise')
         with open(data_filename, 'w') as fout:
             print(data_filename)
-            for p1, p2 in tqdm(combinations(p2occs.keys(), 2)):
+            for p1, p2 in tqdm(combinations(prop_split, 2)):
                 if (p1, p2) in is_sibling:  # positive pair
                     for p1o, p2o in get_all_pairs(p1, p2):
                         fout.write('{}\t{}\t{}\n'.format(1, p1o, p2o))

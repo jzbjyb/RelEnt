@@ -37,7 +37,13 @@ class ModelWrapper(nn.Module):
         self.emb_proj = nn.Linear(emb_size, hidden_size)
         self.gnn = GatedGraphNeuralNetwork(hidden_size=hidden_size, num_edge_types=1,
                                            layer_timesteps=[3, 3], residual_connections={})
-        self.binary_cla = nn.Linear(hidden_size * 2, 1)
+        self.binary_cla = nn.Sequential(
+            nn.Dropout(p=0.2),
+            nn.Linear(hidden_size * 2, hidden_size),
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
+            nn.Linear(hidden_size, 1)
+        )
 
 
     def forward(self, data: Dict, labels: torch.LongTensor):
@@ -57,6 +63,26 @@ class ModelWrapper(nn.Module):
         labels = labels.float()
         loss = nn.BCELoss()(logits.squeeze(), labels)
         return logits, loss
+
+
+def one_epoch(split, dataloader, optimizer):
+    loss_li, pred_li = [], []
+    if split == 'train':
+        model.train()
+        #iter = tqdm(dataloader.batch_iter(split, batch_size=64, batch_per_epoch=200, repeat=True))
+        iter = tqdm(dataloader.batch_iter(split, batch_size=1024, restart=True))
+    else:
+        iter = tqdm(dataloader.batch_iter(split, batch_size=1024, restart=True))
+        model.eval()
+    for batch in iter:
+        logits, loss = model(*pointwise_batch_to_tensor(batch, device))
+        if split == 'train':
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        loss_li.append(loss.item())
+        pred_li.extend([(g1.pid, g2.pid, logits[i].item()) for i, (g1, g2, label) in enumerate(batch)])
+    return pred_li, loss_li
 
 
 if __name__ == '__main__':
@@ -92,27 +118,20 @@ if __name__ == '__main__':
         filer_embedding(args.emb_file, 'data/test.emb', dataloader.all_ids)
         exit(1)
 
-    model = ModelWrapper(emb_size=200, hidden_size=32, method='emb')
+    model = ModelWrapper(emb_size=200, hidden_size=64, method='emb')
     model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-    metric = AnalogyEval(args.subprop_file, method='accuracy', reduction='sample')
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    metric = AnalogyEval(args.subprop_file, method='accuracy', reduction='property')
 
     for epoch in range(20):
-        train_loss, train_result = [], []
-        model.train()
-        for batch in tqdm(dataloader.batch_iter('train', batch_size=64, batch_per_epoch=200, repeat=True)):
-            logits, loss = model(*pointwise_batch_to_tensor(batch, device))
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            train_loss.append(loss.item())
-            train_result.extend([(g1.pid, g2.pid, logits[i].item()) for i, (g1, g2, label) in enumerate(batch)])
 
-        dev_loss, dev_result = [], []
-        model.eval()
-        for batch in tqdm(dataloader.batch_iter('dev', batch_size=64, restart=True)):
-            logits, loss = model(*pointwise_batch_to_tensor(batch, device))
-            dev_loss.append(loss.item())
-            dev_result.extend([(g1.pid, g2.pid, logits[i].item()) for i, (g1, g2, label) in enumerate(batch)])
+        if epoch == 0:
+            dev_pred, dev_loss = one_epoch('dev', dataloader, optimizer)
+            print('init')
+            print(np.mean(dev_loss), metric.eval(dev_pred))
 
-        print(np.mean(train_loss), np.mean(dev_loss), metric.eval(train_result), metric.eval(dev_result))
+        train_pred, train_loss = one_epoch('train', dataloader, optimizer)
+        dev_pred, dev_loss = one_epoch('dev', dataloader, optimizer)
+
+        print('{:>.3f}\t{:>.3f}\t{:>.3f}\t{:>.3f}'.format(
+            np.mean(train_loss), np.mean(dev_loss), metric.eval(train_pred), metric.eval(dev_pred)))

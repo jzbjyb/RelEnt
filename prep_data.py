@@ -5,7 +5,7 @@ from typing import Dict, Tuple
 from collections import defaultdict
 from random import shuffle
 import argparse, os, random
-from itertools import combinations
+from itertools import combinations, product
 from tqdm import tqdm
 import numpy as np
 from wikiutil.property import read_subprop_file, get_all_subtree, read_prop_occ_file_from_dir, \
@@ -54,6 +54,8 @@ if __name__ == '__main__':
     parser.add_argument('--max_occ_per_prop', type=int, default=5,
                         help='max subgraph sampled for each property')
     parser.add_argument('--method', type=str, default='by_tree', choices=['by_tree', 'within_tree'])
+    parser.add_argument('--contain_train', action='store_true',
+                        help='whether dev and test contain training properties')
     args = parser.parse_args()
 
     '''
@@ -162,7 +164,11 @@ if __name__ == '__main__':
         data_filename = os.path.join(args.out_dir, prop_split_name.split('_')[0] + '.pointwise')
         with open(data_filename, 'w') as fout:
             print(data_filename)
-            for p1, p2 in tqdm(combinations(prop_split, 2)):
+            def pair_iter():
+                yield from combinations(prop_split, 2)
+                if args.contain_train and (prop_split_name.startswith('dev_') or prop_split_name.startswith('test_')):
+                    yield from product(prop_split, train_prop)
+            for p1, p2 in tqdm(pair_iter()):
                 if (p1, p2) in is_sibling:  # positive pair
                     for p1o, p2o in get_all_pairs(p1, p2):
                         fout.write('{}\t{}\t{}\n'.format(1, p1o, p2o))

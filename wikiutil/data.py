@@ -226,11 +226,9 @@ class PointwiseDataLoader():
         if property_occ not in self._subgraph_cache:
             self._subgraph_cache[property_occ] = PropertySubgraph(
                 pid, hid, tid, self.subgraph_dict, self.emb_dict, self.emb_size, self.edge_type)
+            self.all_ids |= self._subgraph_cache[property_occ].id2ind.keys()
 
-        sg = self._subgraph_cache[property_occ]
-        self.all_ids |= sg.id2ind.keys()
-
-        return sg
+        return self._subgraph_cache[property_occ]
 
 
     def renew_data_iter(self, split='train'):

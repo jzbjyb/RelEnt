@@ -165,3 +165,78 @@ def print_subtree(root: Tuple[str, List], id2label: Dict[str, str]=None, prefix=
 	for c in root[1]:
 		ls.append(print_subtree(c, id2label, prefix + '\t'))
 	return '\n'.join([l] + ls)
+
+
+class PropertySubtree():  # TODO: replace tuple with PropertySubtree
+	def __init__(self, tree: Tuple[str, List]):
+		self.tree = tree
+
+
+	@property
+	def nodes(self):
+		return list(self.self_traverse_subtree())
+
+
+	@staticmethod
+	def traverse_subtree(subtree):
+		yield subtree[0]
+		for c in subtree[1]:
+			yield from PropertySubtree.traverse_subtree(c)
+
+
+	def self_traverse_subtree(self):
+		yield from PropertySubtree.traverse_subtree(self.tree)
+
+
+	@staticmethod
+	def split_within_subtree(subtree, tr, dev, te):
+		''' split the subtree by spliting each tir into train/dev/test set '''
+		siblings = [c[0] for c in subtree[1]]
+		tr = int(len(siblings) * tr)
+		dev = int(len(siblings) * dev)
+		te = len(siblings) - tr - dev
+		test = siblings[tr + dev:]
+		dev = siblings[tr:tr + dev]
+		train = siblings[:tr]
+		if len(train) > 0 and len(dev) > 0 and len(test) > 0:
+			yield train, dev, test
+		for c in subtree[1]:
+			PropertySubtree.split_within_subtree(c, tr, dev, te)
+
+
+	def self_split_within_subtree(self, tr, dev, te):
+		yield from PropertySubtree.split_within_subtree(self.tree, tr, dev, te)
+
+
+	@staticmethod
+	def get_depth(subtree: Tuple[str, List]) -> int:
+		depth = 1
+		max_depth = 0
+		for c in subtree[1]:
+			d = PropertySubtree.get_depth(c)
+			if d > max_depth:
+				max_depth = d
+		return depth + max_depth
+
+
+	@staticmethod
+	def print_subtree(subtree: Tuple[str, List],
+					  id2label: Dict[str, str] = None,
+					  defalut_label: str = '',
+					  prefix: str = '') -> str:
+		id = subtree[0]
+		label = id2label[id] if id2label and id in id2label else defalut_label
+		l = prefix + id + ': ' + label
+		ls = []
+		for c in subtree[1]:
+			ls.append(PropertySubtree.print_subtree(
+				c, id2label=id2label, defalut_label=defalut_label, prefix=prefix + '\t'))
+		return '\n'.join([l] + ls)
+
+
+	def self_print_subtree(self,
+						   id2label: Dict[str, str] = None,
+						   defalut_label: str = '',
+						   prefix: str = '') -> str:
+		return PropertySubtree.print_subtree(
+			self.tree, id2label=id2label, defalut_label=defalut_label, prefix=prefix)

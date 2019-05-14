@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 
 
+from typing import Dict
+from collections import defaultdict
 import argparse, os, random
 from itertools import combinations
 from tqdm import tqdm
 import numpy as np
 from wikiutil.property import read_subprop_file, get_all_subtree, read_prop_occ_file, \
-    get_is_sibling, print_subtree, read_subgraph_file
+    get_is_sibling, print_subtree, read_subgraph_file, PropertySubtree
 from wikiutil.data import read_emb_ids, filter_prop_occ_by_subgraph_and_emb, save_emb_ids
 
 
@@ -111,15 +113,12 @@ if __name__ == '__main__':
                 dev_prop.extend([p for p in dev_p if p in all_propids])
                 test_prop.extend([p for p in test_p if p in all_propids])
 
-    print('totally {} properties, train {} /dev {} /test {}'.format(
+    # remove duplicates
+    train_prop = list(set(train_prop))
+    dev_prop = list(set(dev_prop))
+    test_prop = list(set(test_prop))
+    print('totally {} properties, inititally train {} /dev {} /test {}'.format(
         len(all_propids), len(train_prop), len(dev_prop), len(test_prop)))
-
-    # save all properties
-    for prop_split_name in ['train_prop', 'dev_prop', 'test_prop']:
-        with open(os.path.join(args.out_dir, '.'.join(prop_split_name.split('_'))), 'w') as fout:
-            prop_split = eval(prop_split_name)
-            prop_split = [(p, pid2plabel[p]) for p in prop_split]
-            fout.write('\n'.join(map(lambda x: '\t'.join(x), prop_split)) + '\n')
 
     # load subgraph and emb for existence check
     subgraph_dict = read_subgraph_file(args.subgraph_file)
@@ -128,6 +127,7 @@ if __name__ == '__main__':
 
     # get multiple occurrence for each property
     is_sibling = get_is_sibling(subprops)
+    final_prop_split: Dict[str, str] = defaultdict(lambda: '*')
     for prop_split_name in ['train_prop', 'dev_prop', 'test_prop']:
         prop_split = eval(prop_split_name)
 
@@ -135,11 +135,20 @@ if __name__ == '__main__':
         for p in prop_split:
             occs = read_prop_occ_file(os.path.join(args.prop_dir, p + '.txt'), filter=True)
             occs = filter_prop_occ_by_subgraph_and_emb(p, occs, subgraph_dict, emb_set)  # check existence
+            if len(occs) == 0:
+                continue  # skip empty property
             occs = np.random.permutation(occs)[:args.max_occ_per_prop]
             p2occs[p] = occs
 
-        print('{} out of {} property has no occurrence'.format(
-            len([p for p in p2occs if len(p2occs[p]) == 0]), len(p2occs)))
+        print('{} out of {} property pass existence check'.format(len(p2occs), len(prop_split)))
+
+        # save properties for this split
+        with open(os.path.join(args.out_dir, '.'.join(prop_split_name.split('_'))), 'w') as fout:
+            fout.write('\n'.join(map(lambda x: '\t'.join(x), [(p, pid2plabel[p]) for p in p2occs])) + '\n')
+
+        # save to final split
+        for p in p2occs:
+            final_prop_split[p] = prop_split_name
 
         def get_all_pairs(p1, p2):
             for p1o in p2occs[p1]:
@@ -150,10 +159,22 @@ if __name__ == '__main__':
         data_filename = os.path.join(args.out_dir, prop_split_name.split('_')[0] + '.pointwise')
         with open(data_filename, 'w') as fout:
             print(data_filename)
-            for p1, p2 in tqdm(combinations(prop_split, 2)):
+            for p1, p2 in tqdm(combinations(p2occs.keys(), 2)):
                 if (p1, p2) in is_sibling:  # positive pair
                     for p1o, p2o in get_all_pairs(p1, p2):
                         fout.write('{}\t{}\t{}\n'.format(1, p1o, p2o))
                 else:  # negative pair
                     for p1o, p2o in get_all_pairs(p1, p2):
                         fout.write('{}\t{}\t{}\n'.format(0, p1o, p2o))
+
+    if args.method == 'within_tree':
+        subtrees_cls = [PropertySubtree(st) for st in subtrees]
+        subtrees_cls = [st for st in subtrees_cls
+                        if len(set(st.nodes) & set(final_prop_split.keys())) > 0]
+        # concat label and split
+        final_prop_split = dict((p, pid2plabel[p] + ' ' + final_prop_split[p].upper())
+                                for p in pid2plabel)
+        # save subtrees for this split
+        with open(os.path.join(args.out_dir, 'within_tree_split.txt'), 'w') as fout:
+            for st in subtrees_cls:
+                fout.write(st.self_print_subtree(final_prop_split) + '\n\n')

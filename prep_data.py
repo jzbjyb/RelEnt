@@ -7,7 +7,7 @@ import argparse, os, random
 from itertools import combinations
 from tqdm import tqdm
 import numpy as np
-from wikiutil.property import read_subprop_file, get_all_subtree, read_prop_occ_file, \
+from wikiutil.property import read_subprop_file, get_all_subtree, read_prop_occ_file_from_dir, \
     get_is_sibling, print_subtree, read_subgraph_file, PropertySubtree
 from wikiutil.data import read_emb_ids, filter_prop_occ_by_subgraph_and_emb, save_emb_ids
 
@@ -70,8 +70,8 @@ if __name__ == '__main__':
     all_propids = set()
     for root, dirs, files in os.walk(args.prop_dir):
         for file in files:
-            if file.endswith('.txt'):  # do not use order file
-                all_propids.add(file.rsplit('.', 1)[0])
+            if file.endswith('.txt') or file.endswith('.txt.order'):  # also use order file
+                all_propids.add(file.split('.', 1)[0])
 
     tr, dev, te = list(map(float, args.train_dev_test.split(':')))
 
@@ -133,7 +133,7 @@ if __name__ == '__main__':
 
         p2occs = {}
         for p in prop_split:
-            occs = read_prop_occ_file(os.path.join(args.prop_dir, p + '.txt'), filter=True)
+            occs = read_prop_occ_file_from_dir(p, args.prop_dir, filter=True, use_order=True)
             occs = filter_prop_occ_by_subgraph_and_emb(p, occs, subgraph_dict, emb_set)  # check existence
             if len(occs) == 0:
                 continue  # skip empty property

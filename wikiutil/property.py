@@ -1,7 +1,7 @@
 from typing import List, Tuple, Dict
 from collections import defaultdict
 from itertools import combinations
-import subprocess, re
+import subprocess, re, os
 import numpy as np
 
 
@@ -51,6 +51,17 @@ def get_sub_properties(pid):
 			l = l.split(',')
 			subs.append((l[1], l[2].strip('"')))
 	return subs
+
+
+def read_prop_occ_file_from_dir(prop: str, dir: str, filter=False, use_order=False):
+	filepath = os.path.join(dir, prop + '.txt')
+	if os.path.exists(filepath):
+		return read_prop_occ_file(filepath, filter=filter)
+	if use_order:
+		filepath = os.path.join(dir, prop + '.txt.order')
+		if os.path.exists(filepath):
+			return read_prop_occ_file(filepath, filter=filter)
+	raise Exception('{} not exist'.format(prop))
 
 
 def read_prop_occ_file(filepath, filter=False) -> List[Tuple[str, str]]:

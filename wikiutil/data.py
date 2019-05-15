@@ -180,12 +180,17 @@ class PointwiseDataLoader():
                  subgraph_file: str,
                  emb_size: int = None,
                  emb_file: str = None,
-                 edge_type: str = 'one'):
+                 edge_type: str = 'one',
+                 filter_prop: set = None,
+                 keep_one_per_prop: bool = False):
         print('load data ...')
-        self.train_list = read_pointiwse_file(train_file)
+        self.train_list = read_pointiwse_file(
+            train_file, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
         self.train_list = self.pos_neg_filter(self.train_list, neg_ratio=5)  # TODO: add neg_ratio param
-        self.dev_list = read_pointiwse_file(dev_file)
-        self.test_list = read_pointiwse_file(test_file)
+        self.dev_list = read_pointiwse_file(
+            dev_file, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
+        self.test_list = read_pointiwse_file(
+            test_file, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
         self.subgraph_dict = read_subgraph_file(subgraph_file)
         assert edge_type in {'one'}
         # 'one' means only use a single type of edge to link properties and entities

@@ -17,4 +17,5 @@
 ## Implementation
 
 - [pytorch biggraph embedding](https://ai.facebook.com/blog/open-sourcing-pytorch-biggraph-for-faster-embeddings-of-extremely-large-graphs/)
+    - [Wikidata graph](https://torchbiggraph.readthedocs.io/en/latest/pretrained_embeddings.html#wikidata)
 - [gated graph nn](https://github.com/pcyin/pytorch-gated-graph-neural-network/)

@@ -87,15 +87,25 @@ def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
 	return result
 
 
-def read_pointiwse_file(filepath) \
+def read_pointiwse_file(filepath,
+						filter_prop: set = None,
+						keep_one_per_prop: bool = False) \
 		-> List[Tuple[Tuple[str, str, str], Tuple[str, str, str], int]]:
 	result = []
+	seen_prop = set()
 	with open(filepath, 'r') as fin:
 		for l in fin:
 			label, p1o, p2o = l.strip().split('\t')
 			label = int(label)
 			p1, h1, t1 = p1o.split(' ')
 			p2, h2, t2 = p2o.split(' ')
+			if filter_prop and (p1 not in filter_prop or p2 not in filter_prop):
+				continue
+			if keep_one_per_prop and (p1, p2) in seen_prop:
+				continue
+			if keep_one_per_prop:
+				seen_prop.add((p1, p2))
+				seen_prop.add((p2, p1))
 			result.append(((h1, p1, t1), (h2, p2, t2), label))
 	return result
 

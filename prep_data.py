@@ -56,14 +56,9 @@ if __name__ == '__main__':
     parser.add_argument('--method', type=str, default='by_tree', choices=['by_tree', 'within_tree'])
     parser.add_argument('--contain_train', action='store_true',
                         help='whether dev and test contain training properties')
+    parser.add_argument('--num_per_prop_pair', type=int, default=10000,
+                        help='number of pairs to sample for each property pair')
     args = parser.parse_args()
-
-    '''
-    python prep_data.py --prop_file data/subprops.txt --prop_dir data/property_occurrence_subtree/ \
-        --subgraph_file data/property_occurrence_subtree.subgraph \
-        --emb_file ~/tir1/data/wikidata/wikidata_translation_v1.tsv.id.QP \
-        --out_dir data/analogy_dataset/test/ --method within_tree
-    '''
 
     random.seed(2019)
     np.random.seed(2019)
@@ -156,10 +151,21 @@ if __name__ == '__main__':
             final_prop_split[p] = prop_split_name
 
         def get_all_pairs(p1, p2):
-            for p1o in p2occs[p1]:
-                for p2o in p2occs[p2]:
-                    # yield 'p1 head tail', 'p2 head tail'
-                    yield ' '.join([p1] + list(p1o)), ' '.join([p2] + list(p2o))
+            sam_prob = min(1, args.num_per_prop_pair / (len(p2occs[p1]) * len(p2occs[p2])))
+            all_pairs = []
+            if sam_prob == 1:
+                for p1o in p2occs[p1]:
+                    for p2o in p2occs[p2]:
+                        if random.random() <= sam_prob:
+                            all_pairs.append((' '.join([p1] + list(p1o)), ' '.join([p2] + list(p2o))))
+            else:
+                for i in range(args.num_per_prop_pair):
+                    p1o = min(int(len(p2occs[p1]) * random.random()), len(p2occs[p1]) - 1)
+                    p1o = p2occs[p1][p1o]
+                    p2o = min(int(len(p2occs[p2]) * random.random()), len(p2occs[p2]) - 1)
+                    p2o = p2occs[p2][p2o]
+                    all_pairs.append((' '.join([p1] + list(p1o)), ' '.join([p2] + list(p2o))))
+            return all_pairs[:args.num_per_prop_pair]
 
         data_filename = os.path.join(args.out_dir, prop_split_name.split('_')[0] + '.pointwise')
         with open(data_filename, 'w') as fout:

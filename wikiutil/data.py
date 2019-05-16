@@ -3,6 +3,7 @@ from collections import defaultdict, namedtuple
 from random import shuffle
 from tqdm import tqdm
 import numpy as np
+import multiprocessing
 from .property import read_pointiwse_file, read_subgraph_file
 
 
@@ -182,7 +183,8 @@ class PointwiseDataLoader():
                  emb_file: str = None,
                  edge_type: str = 'one',
                  filter_prop: set = None,
-                 keep_one_per_prop: bool = False):
+                 keep_one_per_prop: bool = False,
+                 num_worker: int = 1):
         print('load data ...')
         self.train_list = read_pointiwse_file(
             train_file, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
@@ -200,6 +202,8 @@ class PointwiseDataLoader():
         print('prep data ...')
         self.all_ids = set()  # all the entity ids and property ids used
         self._subgraph_cache: Dict[Tuple[str, str, str], PropertySubgraph] = {}  # cache subgraphs
+        self._cache_lock = multiprocessing.Value('i', 0)
+        self.num_worker = num_worker
         self.train_graph = self.create_pointwise_samples(self.train_list)
         print('train {} -> {}'.format(len(self.train_list), len(self.train_graph)))
         self.dev_graph = self.create_pointwise_samples(self.dev_list)
@@ -216,12 +220,37 @@ class PointwiseDataLoader():
         return pos + neg[:len(pos) * neg_ratio]
 
 
-    def create_pointwise_samples(self, data: List):
+    def create_pointwise_samples_mutiple_process(self, data: List):
+        # start each worker with a shared return_dict
+        manager = multiprocessing.Manager()
+        return_dict = manager.dict()
+        workers = []
+        len_per_worker = int(np.ceil(len(data) / self.num_worker))
+        for i in range(self.num_worker):
+            data_for_worker = data[i * len_per_worker:(i + 1) * len_per_worker]
+            workder = multiprocessing.Process(target=self.create_pointwise_samples,
+                                              args=(data_for_worker, i, return_dict))
+            workers.append(workder)
+            workder.start()
+
+        # wait for end of each worker
+        for worker in workers:
+            worker.join()
+
+        # merge results
+        result = []
+        for i in range(self.num_worker):
+            result.extend(return_dict[i])
+
+
+    def create_pointwise_samples(self, data: List, worker_id: int = None, return_dict: Dict = None):
         result = []
         for sample in tqdm(data):
             p1o, p2o, label = sample
             sample = (self.create_subgraph(p1o), self.create_subgraph(p2o), label)
             result.append(sample)
+        if worker_id is not None:
+            return_dict[worker_id] = result
         return result
 
 
@@ -229,9 +258,13 @@ class PointwiseDataLoader():
         hid, pid, tid = property_occ
 
         if property_occ not in self._subgraph_cache:
-            self._subgraph_cache[property_occ] = PropertySubgraph(
+            sg = PropertySubgraph(
                 pid, hid, tid, self.subgraph_dict, self.emb_dict, self.emb_size, self.edge_type)
-            self.all_ids |= self._subgraph_cache[property_occ].id2ind.keys()
+            # TODO: add multiprocess with lock
+            #with self._cache_lock.get_lock():
+            if property_occ not in self._subgraph_cache:
+                self._subgraph_cache[property_occ] = sg
+                self.all_ids.update(set(sg.id2ind.keys()))
 
         return self._subgraph_cache[property_occ]
 

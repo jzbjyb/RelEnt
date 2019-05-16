@@ -110,6 +110,14 @@ def read_pointiwse_file(filepath,
 	return result
 
 
+def read_prop_file(filepath) -> List[str]:
+	result = []
+	with open(filepath, 'r') as fin:
+		for l in fin:
+			result.append(l.strip().split('\t')[0])
+	return result
+
+
 def read_subgraph_file(filepath) -> Dict[str, List[Tuple[str, str, str]]]:
 	result = {}
 	with open(filepath, 'r') as fin:

@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from wikiutil.data import PointwiseDataLoader, PropertySubgraph, filer_embedding
 from wikiutil.metric import AnalogyEval
+from wikiutil.property import read_prop_file
 from analogy.ggnn import GatedGraphNeuralNetwork, AdjacencyList
 
 
@@ -121,17 +122,24 @@ if __name__ == '__main__':
     model = ModelWrapper(emb_size=200, hidden_size=64, method='emb')
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    metric = AnalogyEval(args.subprop_file, method='accuracy', reduction='property')
+    train_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'train.prop')))
+    train_metirc = AnalogyEval(args.subprop_file, method='auc_map', reduction='property', prop_set=train_prop_set)
+    dev_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'dev.prop')))
+    dev_metric = AnalogyEval(args.subprop_file, method='auc_map',
+                             reduction='property', prop_set=dev_prop_set, debug=True)
 
     for epoch in range(20):
 
+        print('epoch {}'.format(epoch + 1))
         if epoch == 0:
             dev_pred, dev_loss = one_epoch('dev', dataloader, optimizer)
             print('init')
-            print(np.mean(dev_loss), metric.eval(dev_pred))
+            print(np.mean(dev_loss), dev_metric.eval(dev_pred))
 
         train_pred, train_loss = one_epoch('train', dataloader, optimizer)
         dev_pred, dev_loss = one_epoch('dev', dataloader, optimizer)
 
-        print('{:>.3f}\t{:>.3f}\t{:>.3f}\t{:>.3f}'.format(
-            np.mean(train_loss), np.mean(dev_loss), metric.eval(train_pred), metric.eval(dev_pred)))
+        #print('{:>.3f}\t{:>.3f}\t{:>.3f}\t{:>.3f}'.format(
+        #    np.mean(train_loss), np.mean(dev_loss), train_metirc.eval(train_pred), dev_metric.eval(dev_pred)))
+        print('tr_loss: {:>.3f}\tdev_loss: {:>.3f}'.format(np.mean(train_loss), np.mean(dev_loss)))
+        print(train_metirc.eval(train_pred), dev_metric.eval(dev_pred))

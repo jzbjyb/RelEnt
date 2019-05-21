@@ -155,5 +155,12 @@ class AnalogyEval():
         return getattr(self, self.reduction + '_' + self.method)(predictions)
 
 
-
-
+    def eval_by(self,
+                reduction: str,
+                method: str,
+                predictions: List[Tuple[str, str, float]]):
+        '''
+        evaluate the predictions,
+        tuple is [property1, property2, probability of being analogous].
+        '''
+        return getattr(self, reduction + '_' + method)(predictions)

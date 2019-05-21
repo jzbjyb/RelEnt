@@ -4,6 +4,8 @@ from random import shuffle
 from tqdm import tqdm
 import numpy as np
 import multiprocessing
+import torch
+from torch.utils.data import Dataset
 from .property import read_pointiwse_file, read_subgraph_file
 
 
@@ -171,6 +173,93 @@ class PropertySubgraph():
                 acc += g.size
             new_emb = np.concatenate(new_emb, axis=0)
             return new_adjs, new_emb, new_prop_ind
+
+
+class AdjacencyList:
+    """represent the topology of a graph"""
+    def __init__(self, node_num: int, adj_list: List, device: torch.device = None):
+        self.node_num = node_num
+        self.data = torch.tensor(adj_list, dtype=torch.long, device=device)
+        self.edge_num = len(adj_list)
+
+
+    @property
+    def device(self):
+        return self.data.device
+
+
+    def to(self, device):
+        self.data.to(device)
+
+
+    def __getitem__(self, item):
+        return self.data[item]
+
+
+class PointwiseDataset(Dataset):
+    def __init__(self,
+                 filepath: str,
+                 subgraph_file: str,
+                 emb_size: int = None,
+                 emb_dict: str = None,
+                 edge_type: str = 'one',
+                 filter_prop: set = None,
+                 keep_one_per_prop: bool = False,
+                 neg_ratio: int = None):
+        print('load data from {} ...'.format(filepath))
+        self.inst_list = read_pointiwse_file(
+            filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
+        if neg_ratio:
+            self.inst_list = self.pos_neg_filter(self.inst_list, neg_ratio=neg_ratio)
+        self.subgraph_dict = read_subgraph_file(subgraph_file)
+        assert edge_type in {'one'}
+        # 'one' means only use a single type of edge to link properties and entities
+        self.edge_type = edge_type
+        self.emb_size = emb_size
+        self.emb_dict = emb_dict
+
+
+    def pos_neg_filter(self, samples: List[Tuple[Any, Any, int]], neg_ratio: int = 3):
+        # used to filter negative samples for pointwise methods
+        pos = [s for s in samples if s[2] > 0]
+        neg = [s for s in samples if s[2] == 0]
+        shuffle(neg)
+        return pos + neg[:len(pos) * neg_ratio]
+
+
+    def __len__(self):
+        return len(self.inst_list)
+
+
+    def __getitem__(self, idx):
+        return self.inst_list[idx]
+
+
+    def create_subgraph(self, property_occ: Tuple[str, str, str]) -> PropertySubgraph:
+        hid, pid, tid = property_occ
+        sg = PropertySubgraph(
+            pid, hid, tid, self.subgraph_dict, self.emb_dict, self.emb_size, self.edge_type)
+        return sg
+
+
+    def collate_fn(self, insts: List):
+        result = []
+        for inst in insts:
+            p1o, p2o, label = inst
+            sample = (self.create_subgraph(p1o), self.create_subgraph(p2o), label)
+            result.append(sample)
+        packed_sg1, packed_sg2, labels = zip(*result)
+        adjs12, e12, prop_ind12 = [], [], []
+        for packed_sg in [packed_sg1, packed_sg2]:
+            adjs, e, prop_ind = PropertySubgraph.pack_graphs(packed_sg)
+            adjs = AdjacencyList(node_num=len(adjs), adj_list=adjs)
+            e = torch.tensor(e, dtype=torch.float)
+            prop_ind = torch.tensor(prop_ind)
+            adjs12.append(adjs)
+            e12.append(e)
+            prop_ind12.append(prop_ind)
+        return {'adj': adjs12, 'emb': e12, 'prop_ind': prop_ind12}, \
+               torch.LongTensor(labels)
 
 
 class PointwiseDataLoader():

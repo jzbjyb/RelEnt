@@ -6,7 +6,7 @@ import argparse, json, os, time
 from collections import defaultdict
 from tqdm import tqdm
 import numpy as np
-from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, print_subtree, get_depth, \
+from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, \
     hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file
 from wikiutil.wikidata_query_service import get_property_occurrence
 
@@ -44,10 +44,10 @@ def build_tree(args):
     with open(args.out, 'w') as fout:
         fout.write('\n--- subtrees ---\n\n')
         for st in subtrees:
-            fout.write(print_subtree(st, pid2plabel) + '\n\n')
+            fout.write(st.print(pid2plabel) + '\n\n')
         fout.write('\n--- isolated properties ---\n\n')
         for ip in isolate:
-            fout.write('{}: {}\n'.format(ip[0], pid2plabel[ip[0]]))
+            fout.write(ip.print(pid2plabel) + '\n\n')
 
 
 def prop_occur(args, only_isolate=True):
@@ -56,7 +56,7 @@ def prop_occur(args, only_isolate=True):
     print('{} props'.format(num_prop))
 
     _, isolate = get_all_subtree(subprops)
-    isolate = set(iso[0] for iso in isolate)
+    isolate = set(iso.nodes[0] for iso in isolate)
 
     for prop in subprops:
         pid = prop[0][0]

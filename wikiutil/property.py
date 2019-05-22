@@ -1,6 +1,7 @@
 from typing import List, Tuple, Dict
 from collections import defaultdict
 from itertools import combinations
+from random import shuffle
 import subprocess, re, os
 import numpy as np
 
@@ -129,13 +130,6 @@ def read_subgraph_file(filepath) -> Dict[str, List[Tuple[str, str, str]]]:
 	return result
 
 
-def get_subtree(root: str, child_dict: Dict[str, List[str]]) -> Tuple[str, List[Tuple[str, List]]]:
-	if root not in child_dict:
-		return (root, [])
-	result = (root, [get_subtree(c, child_dict) for c in child_dict[root]])
-	return result
-
-
 def get_is_sibling(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]):
 	is_sibling = set()
 	for p in subprops:
@@ -143,39 +137,6 @@ def get_is_sibling(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]):
 			is_sibling.add((p1[0], p2[0]))
 			is_sibling.add((p2[0], p1[0]))
 	return is_sibling
-
-
-def get_all_subtree(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]) \
-		-> Tuple[List[Tuple[str, List[Tuple]]], List[Tuple[str, List[Tuple]]]]:
-	num_prop = len(subprops)
-	print('{} props'.format(num_prop))
-
-	# get parent link and children link
-	parent_dict = defaultdict(lambda: [])
-	child_dict = defaultdict(lambda: [])
-	for p in subprops:
-		parent_id = p[0][0]
-		child_dict[parent_id] = [c[0] for c in p[1]]
-		for c in p[1]:
-			parent_dict[c[0]].append(parent_id)
-
-	# construct tree for properties without parent
-	subtrees: List[Tuple[str, List[Tuple]]] = []
-	isolate: List[Tuple[str, List[Tuple]]] = []
-	for p in subprops:
-		pid = p[0][0]
-		if len(parent_dict[pid]) == 0:
-			subtree = get_subtree(pid, child_dict)
-			if len(subtree[1]) > 0:
-				subtrees.append(subtree)
-			else:
-				isolate.append(subtree)
-
-	print('{} subtree'.format(len(subtrees)))
-	print('avg depth: {}'.format(np.mean([get_depth(s) for s in subtrees])))
-	print('{} isolated prop'.format(len(isolate)))
-
-	return subtrees, isolate
 
 
 def get_depth(root: Tuple[str, List]) -> int:
@@ -203,7 +164,13 @@ class PropertySubtree():  # TODO: replace tuple with PropertySubtree
 
 	@property
 	def nodes(self):
-		return list(self.self_traverse_subtree())
+		return list(self.traverse())
+
+
+	@classmethod
+	def build(cls, root: str, child_dict: Dict[str, List[str]]):
+		subtree = get_subtree(root, child_dict)
+		return cls(subtree)
 
 
 	@staticmethod
@@ -213,39 +180,48 @@ class PropertySubtree():  # TODO: replace tuple with PropertySubtree
 			yield from PropertySubtree.traverse_subtree(c)
 
 
-	def self_traverse_subtree(self):
+	def traverse(self):
 		yield from PropertySubtree.traverse_subtree(self.tree)
 
 
 	@staticmethod
-	def split_within_subtree(subtree, tr, dev, te):
+	def split_within_subtree(subtree, tr, dev, te, filter_set: set = None):
 		''' split the subtree by spliting each tir into train/dev/test set '''
 		siblings = [c[0] for c in subtree[1]]
+		shuffle(siblings)
 		tr = int(len(siblings) * tr)
 		dev = int(len(siblings) * dev)
 		te = len(siblings) - tr - dev
 		test = siblings[tr + dev:]
 		dev = siblings[tr:tr + dev]
 		train = siblings[:tr]
+		if filter_set:
+			train = list(set(train) & filter_set)
+			dev = list(set(dev) & filter_set)
+			test = list(set(test) & filter_set)
 		if len(train) > 0 and len(dev) > 0 and len(test) > 0:
 			yield train, dev, test
 		for c in subtree[1]:
-			PropertySubtree.split_within_subtree(c, tr, dev, te)
+			PropertySubtree.split_within_subtree(c, tr, dev, te, filter_set=filter_set)
 
 
-	def self_split_within_subtree(self, tr, dev, te):
-		yield from PropertySubtree.split_within_subtree(self.tree, tr, dev, te)
+	def split_within(self, tr, dev, te, filter_set: set = None):
+		yield from PropertySubtree.split_within_subtree(self.tree, tr, dev, te, filter_set=filter_set)
 
 
 	@staticmethod
-	def get_depth(subtree: Tuple[str, List]) -> int:
+	def get_depth_subtree(subtree: Tuple[str, List]) -> int:
 		depth = 1
 		max_depth = 0
 		for c in subtree[1]:
-			d = PropertySubtree.get_depth(c)
+			d = PropertySubtree.get_depth_subtree(c)
 			if d > max_depth:
 				max_depth = d
 		return depth + max_depth
+
+
+	def get_depth(self) -> int:
+		return PropertySubtree.get_depth_subtree(self.tree)
 
 
 	@staticmethod
@@ -263,9 +239,49 @@ class PropertySubtree():  # TODO: replace tuple with PropertySubtree
 		return '\n'.join([l] + ls)
 
 
-	def self_print_subtree(self,
-						   id2label: Dict[str, str] = None,
-						   defalut_label: str = '',
-						   prefix: str = '') -> str:
+	def print(self,
+			  id2label: Dict[str, str] = None,
+			  defalut_label: str = '',
+			  prefix: str = '') -> str:
 		return PropertySubtree.print_subtree(
 			self.tree, id2label=id2label, defalut_label=defalut_label, prefix=prefix)
+
+
+def get_subtree(root: str, child_dict: Dict[str, List[str]]) -> Tuple[str, List[Tuple[str, List]]]:
+	if root not in child_dict:
+		return (root, [])
+	result = (root, [get_subtree(c, child_dict) for c in child_dict[root]])
+	return result
+
+
+def get_all_subtree(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]) \
+		-> Tuple[List[PropertySubtree], List[PropertySubtree]]:
+	num_prop = len(subprops)
+	print('{} props'.format(num_prop))
+
+	# get parent link and children link
+	parent_dict = defaultdict(lambda: [])
+	child_dict = defaultdict(lambda: [])
+	for p in subprops:
+		parent_id = p[0][0]
+		child_dict[parent_id] = [c[0] for c in p[1]]
+		for c in p[1]:
+			parent_dict[c[0]].append(parent_id)
+
+	# construct tree for properties without parent
+	subtrees: List[PropertySubtree] = []
+	isolate: List[PropertySubtree] = []
+	for p in subprops:
+		pid = p[0][0]
+		if len(parent_dict[pid]) == 0:
+			subtree = PropertySubtree.build(pid, child_dict)
+			if subtree.get_depth() > 1:
+				subtrees.append(subtree)
+			else:
+				isolate.append(subtree)
+
+	print('{} subtree'.format(len(subtrees)))
+	print('avg depth: {}'.format(np.mean([s.get_depth() for s in subtrees])))
+	print('{} isolated prop'.format(len(isolate)))
+
+	return subtrees, isolate

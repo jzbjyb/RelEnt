@@ -53,7 +53,8 @@ if __name__ == '__main__':
     parser.add_argument('--train_dev_test', type=str, default='0.8:0.1:0.1')
     parser.add_argument('--max_occ_per_prop', type=int, default=5,
                         help='max subgraph sampled for each property')
-    parser.add_argument('--method', type=str, default='by_tree', choices=['by_tree', 'within_tree'])
+    parser.add_argument('--method', type=str, default='by_tree',
+                        choices=['by_tree', 'within_tree', 'by_entail-n_way'])
     parser.add_argument('--contain_train', action='store_true',
                         help='whether dev and test contain training properties')
     parser.add_argument('--num_per_prop_pair', type=int, default=10000,
@@ -67,7 +68,7 @@ if __name__ == '__main__':
     pid2plabel = dict(p[0] for p in subprops)
     subtrees, isolate = get_all_subtree(subprops)
 
-    prop2treeid = dict((p, i) for i, subtree in enumerate(subtrees) for p in traverse_subtree(subtree))
+    prop2treeid = dict((p, i) for i, subtree in enumerate(subtrees) for p in subtree.traverse())
 
     ## all the property ids that have been crawled
     all_propids = set()
@@ -106,9 +107,9 @@ if __name__ == '__main__':
         train_subtrees = subtrees[:tr]
 
         # avoid overlap between subtrees
-        test_prop = [p for t in test_subtrees for p in traverse_subtree(t) if p in all_propids]
-        dev_prop = [p for t in dev_subtrees for p in traverse_subtree(t) if p in all_propids]
-        train_prop = [p for t in train_subtrees for p in traverse_subtree(t) if p in all_propids]
+        test_prop = [p for t in test_subtrees for p in t.traverse() if p in all_propids]
+        dev_prop = [p for t in dev_subtrees for p in t.traverse() if p in all_propids]
+        train_prop = [p for t in train_subtrees for p in t.traverse() if p in all_propids]
 
         print('totally {} subtrees, train {} /dev {} /test {}'.format(
             len(subtrees), len(train_subtrees), len(dev_subtrees), len(test_subtrees)))
@@ -118,16 +119,20 @@ if __name__ == '__main__':
             with open(os.path.join(args.out_dir, '.'.join(tree_split_name.split('_'))), 'w') as fout:
                 tree_split = eval(tree_split_name)
                 for st in tree_split:
-                    fout.write(print_subtree(st, pid2plabel) + '\n\n')
+                    fout.write(st.print(pid2plabel) + '\n\n')
 
     elif args.method == 'within_tree':
         # split each tir in a subtree into train/dev/test
         train_prop, dev_prop, test_prop = [], [], []
         for subtree in subtrees:
-            for train_p, dev_p, test_p in split_within_subtree(subtree, tr, dev, te, filter_set=all_propids):
+            for train_p, dev_p, test_p in subtree.split_within(tr, dev, te, filter_set=all_propids):
                 train_prop.extend(train_p)
                 dev_prop.extend(dev_p)
                 test_prop.extend(test_p)
+
+    elif args.method == 'by_entail-n_way':
+        # TODO
+        pass
 
     # remove duplicates and avoid overlap
     test_prop = list(set(test_prop))
@@ -183,13 +188,10 @@ if __name__ == '__main__':
                         fout.write('{}\t{}\t{}\n'.format(0, p1o, p2o))
 
     if args.method == 'within_tree':
-        subtrees_cls = [PropertySubtree(st) for st in subtrees]
-        subtrees_cls = [st for st in subtrees_cls
-                        if len(set(st.nodes) & set(final_prop_split.keys())) > 0]
+        subtrees_remains = [st for st in subtrees if len(set(st.nodes) & set(final_prop_split.keys())) > 0]
         # concat label and split
-        final_prop_split = dict((p, pid2plabel[p] + ' ' + final_prop_split[p].upper())
-                                for p in pid2plabel)
+        final_prop_split = dict((p, pid2plabel[p] + ' ' + final_prop_split[p].upper()) for p in pid2plabel)
         # save subtrees for this split
         with open(os.path.join(args.out_dir, 'within_tree_split.txt'), 'w') as fout:
-            for st in subtrees_cls:
-                fout.write(st.self_print_subtree(final_prop_split) + '\n\n')
+            for st in subtrees_remains:
+                fout.write(st.print(final_prop_split) + '\n\n')

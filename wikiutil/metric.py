@@ -4,7 +4,7 @@ import numpy as np
 from random import shuffle
 import json
 from sklearn.metrics import precision_recall_curve, auc, average_precision_score
-from .property import read_subprop_file, get_is_sibling, get_all_subtree, PropertySubtree
+from .property import read_subprop_file, get_is_sibling, get_all_subtree
 
 
 class AnalogyEval():
@@ -21,7 +21,6 @@ class AnalogyEval():
         self.pid2plabel = dict(p[0] for p in self.subprops)
         self.is_sibling = get_is_sibling(self.subprops)
         self.subtrees, _ = get_all_subtree(self.subprops)
-        self.subtrees = [PropertySubtree(st) for st in self.subtrees]
 
         assert method in {'accuracy', 'auc_map'}
         # 'accuracy': property pair level accuracy

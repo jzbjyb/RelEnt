@@ -222,5 +222,6 @@ fabric.properties
 data
 result
 env
+env_for_train
 slurm_out
 cache

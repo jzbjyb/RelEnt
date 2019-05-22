@@ -157,7 +157,7 @@ def print_subtree(root: Tuple[str, List], id2label: Dict[str, str]=None, prefix=
 	return '\n'.join([l] + ls)
 
 
-class PropertySubtree():  # TODO: replace tuple with PropertySubtree
+class PropertySubtree():
 	def __init__(self, tree: Tuple[str, List]):
 		self.tree = tree
 

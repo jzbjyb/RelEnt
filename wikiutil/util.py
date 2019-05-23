@@ -1,4 +1,6 @@
+from typing import Dict, List
 import functools, os
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -71,3 +73,58 @@ def plot_correlation(matrix, classes, title, saveto):
     '''
     #fig.tight_layout()
     plt.savefig(saveto)
+
+
+def save_emb_ids(filepath, out_filepath):
+    result = set()
+    with open(filepath, 'r') as fin, open(out_filepath, 'w') as fout:
+        for l in tqdm(fin):
+            l = l.split('\t', 1)
+            id = l[0]
+            result.add(id)
+            fout.write(id + '\n')
+
+
+def read_emb_ids(filepath, filter=False) -> set:
+    print('load emb ids ...')
+    result = set()
+    with open(filepath, 'r') as fin:
+        for id in tqdm(fin):
+            id = id.strip()
+            if filter:
+                if id.startswith('<http://www.wikidata.org/entity/') or \
+                        id.startswith('<http://www.wikidata.org/prop/direct/'):
+                    id = id.rsplit('/', 1)[1][:-1]
+                    result.add(id)
+            else:
+                result.add(id)
+    return result
+
+
+def load_embedding(filepath) -> Dict[str, List[float]]:
+    print('load emb ...')
+    result = {}
+    with open(filepath, 'r') as fin:
+        for l in tqdm(fin):
+            l = l.split('\t')
+            id = l[0]
+            emb = list(map(float, l[1:]))
+            result[id] = emb
+    return result
+
+
+def filer_embedding(in_filepath: str,
+                    out_filepath: str,
+                    ids: set):
+    print('filter emb ...')
+    with open(in_filepath, 'r') as fin, open(out_filepath, 'w') as fout:
+        num_entity, num_prop, dim = fin.readline().split('\t')
+        for i, l in tqdm(enumerate(fin)):
+            ls = l.split('\t', 1)
+            id = ls[0]
+            if id.startswith('<http://www.wikidata.org/entity/') or \
+                    id.startswith('<http://www.wikidata.org/prop/direct/'):
+                id = id.rsplit('/', 1)[1][:-1]
+            if id not in ids:
+                continue
+            fout.write(id + '\t' + ls[1])

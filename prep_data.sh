@@ -20,10 +20,10 @@ python prep_data.py \
     --num_per_prop_pair 100 \
     --contain_train
 
-#python train.py \
-#    --dataset_dir ${data_dir} \
-#    --subgraph_file data/property_occurrence_subtree.subgraph \
-#    --subprop_file data/subprops.txt \
-#    --emb_file ~/tir1/data/wikidata/wikidata_translation_v1.tsv \
-#    --no_cuda \
-#    --filter_emb
+python train.py \
+    --dataset_dir ${data_dir} \
+    --subgraph_file data/property_occurrence_subtree.subgraph \
+    --subprop_file data/subprops.txt \
+    --emb_file ~/tir1/data/wikidata/wikidata_translation_v1.tsv \
+    --no_cuda \
+    --filter_emb

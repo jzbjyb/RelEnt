@@ -8,35 +8,32 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from wikiutil.data import PointwiseDataLoader, PointwiseDataset, PropertySubgraph
+from multiprocessing import Manager
+from wikiutil.data import PointwiseDataLoader, PointwiseDataset
 from wikiutil.util import load_embedding, filer_embedding
 from wikiutil.metric import AnalogyEval
 from wikiutil.property import read_prop_file, read_subgraph_file
-from analogy.ggnn import GatedGraphNeuralNetwork, AdjacencyList
-
-
-def pointwise_batch_to_tensor(batch: List[PropertySubgraph], device) \
-        -> Tuple[Dict, torch.LongTensor]:
-    ''' python data to pytorch data '''
-    packed_sg1, packed_sg2, labels = zip(*batch)
-    adjs12, e12, prop_ind12 = [], [], []
-    for packed_sg in [packed_sg1, packed_sg2]:
-        adjs, e, prop_ind = PropertySubgraph.pack_graphs(packed_sg)
-        adjs = AdjacencyList(node_num=len(adjs), adj_list=adjs, device=device)
-        e = torch.tensor(e, dtype=torch.float).to(device)
-        prop_ind = torch.tensor(prop_ind).to(device)
-        adjs12.append(adjs)
-        e12.append(e)
-        prop_ind12.append(prop_ind)
-    return {'adj': adjs12, 'emb': e12, 'prop_ind': prop_ind12}, \
-           torch.LongTensor(labels).to(device)
+from analogy.ggnn import GatedGraphNeuralNetwork
 
 
 class ModelWrapper(nn.Module):
-    def __init__(self, emb_size, hidden_size=64, method='ggnn'):
+    def __init__(self,
+                 emb_size: int,
+                 vocab_size: int = None,
+                 padding_ind: int = 0,  # TODO: add padding index
+                 emb: np.ndarray = None,
+                 hidden_size: int = 64,
+                 method: str = 'ggnn'):
         super(ModelWrapper, self).__init__()
         assert method in {'ggnn', 'emb'}
         self.method = method
+        # get embedding
+        if emb is not None:  # init from pre-trained
+            self.emb = nn.Embedding.from_pretrained(torch.tensor(emb), freeze=True)
+        else:  # random init
+            self.emb = nn.Embedding(vocab_size, emb_size, padding_idx=padding_ind)
+
+        # get model
         self.emb_proj = nn.Linear(emb_size, hidden_size)
         self.gnn = GatedGraphNeuralNetwork(hidden_size=hidden_size, num_edge_types=1,
                                            layer_timesteps=[3, 3], residual_connections={})
@@ -53,7 +50,7 @@ class ModelWrapper(nn.Module):
         ge_list = []
         for i in range(2):
             # get representation
-            ge = self.emb_proj(data['emb'][i])
+            ge = self.emb_proj(self.emb(data['emb_ind'][i]))
             if self.method == 'ggnn':
                 ge = self.gnn.compute_node_representations(
                     initial_node_representation=ge, adjacency_lists=[data['adj'][i]])
@@ -132,7 +129,7 @@ if __name__ == '__main__':
 
     # load subgraph and embedding
     subgraph_dict = read_subgraph_file(args.subgraph_file)
-    emb_dict = load_embedding(args.emb_file) if args.emb_file else None
+    id2ind, emb = load_embedding(args.emb_file, debug=True, emb_size=200) if args.emb_file else (None, None)
     '''
     # TODO debug
     class emb_dict_cls():
@@ -144,21 +141,21 @@ if __name__ == '__main__':
     # load data
     train_data = PointwiseDataset(os.path.join(args.dataset_dir, 'train.pointwise'),
                                   subgraph_dict,
-                                  emb_dict=emb_dict,
+                                  id2ind=id2ind,
                                   edge_type='one',
                                   keep_one_per_prop=False)
     train_dataloader = DataLoader(train_data, batch_size=128, shuffle=True,
                                   num_workers=8, collate_fn=train_data.collate_fn)
     dev_data = PointwiseDataset(os.path.join(args.dataset_dir, 'dev.pointwise'),
                                 subgraph_dict,
-                                emb_dict=emb_dict,
+                                id2ind=id2ind,
                                 edge_type='one',
                                 keep_one_per_prop=False)
     dev_dataloader = DataLoader(dev_data, batch_size=128, shuffle=False,
                                 num_workers=8, collate_fn=dev_data.collate_fn)
 
     # config model, optimizer and evaluation
-    model = ModelWrapper(emb_size=200, hidden_size=64, method='ggnn')
+    model = ModelWrapper(emb_size=200, emb=emb, hidden_size=64, method='ggnn')
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     train_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'train.prop')))

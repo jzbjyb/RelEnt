@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, Tuple
 import functools, os
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -101,16 +101,19 @@ def read_emb_ids(filepath, filter=False) -> set:
     return result
 
 
-def load_embedding(filepath) -> Dict[str, List[float]]:
+def load_embedding(filepath, debug=False, emb_size=None) -> Tuple[Dict[str, int], np.ndarray]:
     print('load emb ...')
-    result = {}
+    id2ind = {}
+    emb = []
     with open(filepath, 'r') as fin:
-        for l in tqdm(fin):
-            l = l.split('\t')
-            id = l[0]
-            emb = list(map(float, l[1:]))
-            result[id] = emb
-    return result
+        for i, l in tqdm(enumerate(fin)):
+            l = l.split('\t', 1)
+            id2ind[l[0]] = i
+            if debug:
+                emb.append([0.1] * emb_size)
+            else:
+                emb.append(list(map(float, l[1].split('\t'))))
+    return id2ind, np.array(emb, dtype=np.float32)
 
 
 def filer_embedding(in_filepath: str,

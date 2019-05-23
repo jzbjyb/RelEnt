@@ -5,10 +5,10 @@ from tqdm import tqdm
 from functools import lru_cache
 import numpy as np
 import multiprocessing
+from multiprocessing import Manager
 import torch
 from torch.utils.data import Dataset
 from .property import read_subgraph_file, read_multi_pointiwse_file
-from .util import load_embedding
 
 
 class DataPrepError(Exception):
@@ -20,15 +20,17 @@ class PropertySubgraph():
                  property_id: str,
                  occurrences: Tuple[Tuple[str, str]],
                  subgraph_dict: Dict[str, List[Tuple[str, str, str]]],
-                 emb_dict: Dict[str, List[float]] = None,
-                 emb_size: int = None,
+                 id2ind: Dict[str, int] = None,
+                 padding_ind: int = 0,  # TODO: add padding index
                  edge_type: str = 'one'):
         self.pid = property_id
         self.occurrences = occurrences
         self.subgraph_dict = subgraph_dict
+        self.id2ind = id2ind
+        self.padding_ind = padding_ind
         assert edge_type in {'one'}
         self.edge_type = edge_type
-        self.id2ind, self.adjs, self.emb, self.prop_ind = self._to_gnn_input(emb_dict, emb_size)
+        self.id2ind, self.adjs, self.emb_ind, self.prop_ind = self._to_gnn_input()
 
 
     @property
@@ -36,10 +38,8 @@ class PropertySubgraph():
         return len(self.id2ind)
 
 
-    def _to_gnn_input(self,
-                     emb_dict: Dict[str, List[float]] = None,
-                     emb_size: int = None):
-        ''' convert to gnn input format (adjacency list, input emb, and prop index) '''
+    def _to_gnn_input(self):
+        ''' convert to gnn input format (adjacency list, input emb index, and prop index) '''
 
         if self.edge_type == 'one':
             # build adj list
@@ -48,8 +48,10 @@ class PropertySubgraph():
             adjs = []
             for i, (hid, tid) in enumerate(self.occurrences):
                 # for each occurrence, create a pseudo property and link it to the real one
-                # TODO: use another type of link to represent
+                # TODO: (1) use another type of link to represent
                 #  the connection between pseudo property and real property?
+                # TODO: (2) treat property as a node is problematic because the same property might
+                #  appear multiple times in the subgraph
                 ppid = self.pid + '-' + str(i)
                 adjs.append((id2ind[ppid], id2ind[self.pid]))  # link pseudo property to real property
                 adjs.append((id2ind[hid], id2ind[ppid]))
@@ -65,17 +67,17 @@ class PropertySubgraph():
                 except KeyError:
                     raise DataPrepError
 
-            # build emb
+            # build emb index
             ind2id = dict((v, k) for k, v in id2ind.items())
-            if emb_dict is not None:
+            if self.id2ind:
                 try:
-                    emb = np.array([emb_dict[ind2id[i].split('-')[0]] for i in range(len(id2ind))])
+                    emb_ind = np.array([self.id2ind[ind2id[i].split('-')[0]] for i in range(len(id2ind))])
                 except KeyError:
                     raise DataPrepError
             else:
-                emb = np.random.normal(0, 0.1, (len(id2ind), emb_size))
+                raise NotImplementedError
 
-            return id2ind, adjs, emb, [0]
+            return id2ind, adjs, emb_ind, [0]
 
 
     @staticmethod
@@ -85,15 +87,15 @@ class PropertySubgraph():
             raise Exception
         edge_type = graphs[0].edge_type
         if edge_type == 'one':
-            new_adjs, new_emb, new_prop_ind = [], [], []
+            new_adjs, new_emb_ind, new_prop_ind = [], [], []
             acc = 0
             for g in graphs:
                 for adj in g.adjs:
                     new_adjs.append((adj[0] + acc, adj[1] + acc))
-                new_emb.append(g.emb)
+                new_emb_ind.append(g.emb_ind)
                 new_prop_ind.append(acc)
                 acc += g.size
-            new_emb = np.concatenate(new_emb, axis=0)
+            new_emb = np.concatenate(new_emb_ind, axis=0)
             return new_adjs, new_emb, new_prop_ind
 
 
@@ -123,12 +125,13 @@ class PointwiseDataset(Dataset):
     def __init__(self,
                  filepath: str,
                  subgraph_dict: Dict[str, List],
-                 emb_size: int = None,
-                 emb_dict: str = None,
+                 id2ind: Dict[str, int] = None,
+                 padding_ind: int = 0,
                  edge_type: str = 'one',
                  filter_prop: set = None,
                  keep_one_per_prop: bool = False,
-                 neg_ratio: int = None):
+                 neg_ratio: int = None,
+                 manager: Manager = None):
         print('load data from {} ...'.format(filepath))
         self.inst_list = read_multi_pointiwse_file(
             filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
@@ -138,8 +141,15 @@ class PointwiseDataset(Dataset):
         assert edge_type in {'one'}
         # 'one' means only use a single type of edge to link properties and entities
         self.edge_type = edge_type
-        self.emb_size = emb_size
-        self.emb_dict = emb_dict
+        self.id2ind = id2ind
+        self.padding_ind = padding_ind
+
+        # to support multiprocess, use manager to share these objects between processes and avoid copy-on-write
+        # manager is quite slow because of the communication between processes
+        if manager:
+            assert type(id2ind) is type(subgraph_dict) is multiprocessing.managers.DictProxy
+            self.inst_list = manager.list(self.inst_list)
+        # TODO: use numpy array or shared array to avoid copy-on-write
 
 
     def pos_neg_filter(self, samples: List[Tuple[Any, Any, int]], neg_ratio: int = 3):
@@ -163,7 +173,7 @@ class PointwiseDataset(Dataset):
     def create_subgraph(self, property_occ: Tuple[str, Tuple[Tuple[str, str]]]) -> PropertySubgraph:
         pid, occs = property_occ
         sg = PropertySubgraph(
-            pid, occs, self.subgraph_dict, self.emb_dict, self.emb_size, self.edge_type)
+            pid, occs, self.subgraph_dict, self.id2ind, self.padding_ind, self.edge_type)
         return sg
 
 
@@ -171,16 +181,17 @@ class PointwiseDataset(Dataset):
         packed_sg1, packed_sg2, labels = zip(*insts)
         pid1s = [sg.pid for sg in packed_sg1]
         pid2s = [sg.pid for sg in packed_sg2]
-        adjs12, e12, prop_ind12 = [], [], []
+        adjs12, emb_ind12, prop_ind12 = [], [], []
         for packed_sg in [packed_sg1, packed_sg2]:
-            adjs, e, prop_ind = PropertySubgraph.pack_graphs(packed_sg)
+            adjs, emb_ind, prop_ind = PropertySubgraph.pack_graphs(packed_sg)
             adjs = AdjacencyList(node_num=len(adjs), adj_list=adjs)
-            e = torch.tensor(e, dtype=torch.float)
-            prop_ind = torch.tensor(prop_ind)
+            emb_ind = torch.LongTensor(emb_ind)
+            prop_ind = torch.LongTensor(prop_ind)
             adjs12.append(adjs)
-            e12.append(e)
+            emb_ind12.append(emb_ind)
             prop_ind12.append(prop_ind)
-        return {'adj': adjs12, 'emb': e12, 'prop_ind': prop_ind12, 'meta': {'pid1': pid1s, 'pid2': pid2s}}, \
+        return {'adj': adjs12, 'emb_ind': emb_ind12, 'prop_ind': prop_ind12,
+                'meta': {'pid1': pid1s, 'pid2': pid2s}}, \
                torch.LongTensor(labels)
 
 
@@ -190,8 +201,8 @@ class PointwiseDataLoader():
                  dev_file: str,
                  test_file: str,
                  subgraph_file: str,
-                 emb_size: int = None,
-                 emb_file: str = None,
+                 id2ind: Dict[str, int] = None,
+                 padding_ind: int = 0,
                  edge_type: str = 'one',
                  filter_prop: set = None,
                  keep_one_per_prop: bool = False,
@@ -210,8 +221,8 @@ class PointwiseDataLoader():
         assert edge_type in {'one'}
         # 'one' means only use a single type of edge to link properties and entities
         self.edge_type = edge_type
-        self.emb_size = emb_size
-        self.emb_dict = load_embedding(emb_file) if emb_file else None
+        self.id2ind = id2ind
+        self.padding_ind = padding_ind
         print('prep data ...')
         self.all_ids = set()  # all the entity ids and property ids used
         self._subgraph_cache: Dict[Tuple[str, str, str], PropertySubgraph] = {}  # cache subgraphs
@@ -272,7 +283,7 @@ class PointwiseDataLoader():
         property_occ_hash = pid + ':' + ','.join(map(lambda occ: '-'.join(occ), occs))
         if property_occ_hash not in self._subgraph_cache:
             sg = PropertySubgraph(
-                pid, occs, self.subgraph_dict, self.emb_dict, self.emb_size, self.edge_type)
+                pid, occs, self.subgraph_dict, self.id2ind, self.padding_ind, self.edge_type)
             # TODO: add multiprocess with lock
             #with self._cache_lock.get_lock():
             if property_occ_hash not in self._subgraph_cache:

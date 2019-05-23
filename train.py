@@ -2,14 +2,16 @@
 
 
 from typing import List, Tuple, Dict
-import argparse, random, os
+import argparse, random, os, time
 from tqdm import tqdm
 import numpy as np
 import torch
 import torch.nn as nn
-from wikiutil.data import PointwiseDataLoader, PropertySubgraph, filer_embedding
+from torch.utils.data import DataLoader
+from wikiutil.data import PointwiseDataLoader, PointwiseDataset, PropertySubgraph
+from wikiutil.util import load_embedding, filer_embedding
 from wikiutil.metric import AnalogyEval
-from wikiutil.property import read_prop_file
+from wikiutil.property import read_prop_file, read_subgraph_file
 from analogy.ggnn import GatedGraphNeuralNetwork, AdjacencyList
 
 
@@ -66,23 +68,33 @@ class ModelWrapper(nn.Module):
         return logits, loss
 
 
-def one_epoch(split, dataloader, optimizer):
+def one_epoch(split, dataloader, optimizer, device):
     loss_li, pred_li = [], []
     if split == 'train':
         model.train()
-        #iter = tqdm(dataloader.batch_iter(split, batch_size=64, batch_per_epoch=200, repeat=True))
-        iter = tqdm(dataloader.batch_iter(split, batch_size=1024, restart=True))
+        #iter = tqdm(dataloader.batch_iter(split, batch_size=1024, batch_per_epoch=100, repeat=True))
+        iter = tqdm(dataloader)
     else:
-        iter = tqdm(dataloader.batch_iter(split, batch_size=1024, restart=True))
         model.eval()
+        #iter = tqdm(dataloader.batch_iter(split, batch_size=1024, restart=True))
+        iter = tqdm(dataloader)
     for batch in iter:
-        logits, loss = model(*pointwise_batch_to_tensor(batch, device))
+        #logits, loss = model(*pointwise_batch_to_tensor(batch, device))
+        batch_dict, label = batch
+        batch_dict = dict((k, [t.to(device) for t in batch_dict[k]]) for k in batch_dict if k != 'meta')
+        label = label.to(device)
+        logits, loss = model(batch_dict, label)
+
         if split == 'train':
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
         loss_li.append(loss.item())
-        pred_li.extend([(g1.pid, g2.pid, logits[i].item()) for i, (g1, g2, label) in enumerate(batch)])
+        #pred_li.extend([(g1.pid, g2.pid, logits[i].item()) for i, (g1, g2, label) in enumerate(batch)])
+        pred_li.extend([(pid1, pid2, logits[i].item())
+                        for i, (pid1, pid2) in
+                        enumerate(zip(batch[0]['meta']['pid1'], batch[0]['meta']['pid2']))])
     return pred_li, loss_li
 
 
@@ -105,41 +117,73 @@ if __name__ == '__main__':
     else:
         device = torch.device('cuda')
 
-    dataloader = PointwiseDataLoader(os.path.join(args.dataset_dir, 'train.pointwise'),
-                                     os.path.join(args.dataset_dir, 'dev.pointwise'),
-                                     os.path.join(args.dataset_dir, 'test.pointwise'),
-                                     args.subgraph_file,
-                                     emb_file=args.emb_file if not args.filter_emb else None,
-                                     emb_size=None if not args.filter_emb else 32,
-                                     edge_type='one')
-
     # filter emb
-    print('#ids {}'.format(len(dataloader.all_ids)))
     if args.filter_emb:
+        dataloader = PointwiseDataLoader(os.path.join(args.dataset_dir, 'train.pointwise'),
+                                         os.path.join(args.dataset_dir, 'dev.pointwise'),
+                                         os.path.join(args.dataset_dir, 'test.pointwise'),
+                                         args.subgraph_file,
+                                         emb_file=args.emb_file if not args.filter_emb else None,
+                                         emb_size=None if not args.filter_emb else 32,
+                                         edge_type='one')
+        print('#ids {}'.format(len(dataloader.all_ids)))
         filer_embedding(args.emb_file, 'data/test.emb', dataloader.all_ids)
         exit(1)
 
-    model = ModelWrapper(emb_size=200, hidden_size=64, method='emb')
+    # load subgraph and embedding
+    subgraph_dict = read_subgraph_file(args.subgraph_file)
+    emb_dict = load_embedding(args.emb_file) if args.emb_file else None
+    '''
+    # TODO debug
+    class emb_dict_cls():
+        def __getitem__(self, item):
+            return [0.1] * 200
+    emb_dict = emb_dict_cls()
+    '''
+
+    # load data
+    train_data = PointwiseDataset(os.path.join(args.dataset_dir, 'train.pointwise'),
+                                  subgraph_dict,
+                                  emb_dict=emb_dict,
+                                  edge_type='one',
+                                  keep_one_per_prop=False)
+    train_dataloader = DataLoader(train_data, batch_size=128, shuffle=True,
+                                  num_workers=8, collate_fn=train_data.collate_fn)
+    dev_data = PointwiseDataset(os.path.join(args.dataset_dir, 'dev.pointwise'),
+                                subgraph_dict,
+                                emb_dict=emb_dict,
+                                edge_type='one',
+                                keep_one_per_prop=False)
+    dev_dataloader = DataLoader(dev_data, batch_size=128, shuffle=False,
+                                num_workers=8, collate_fn=dev_data.collate_fn)
+
+    # config model, optimizer and evaluation
+    model = ModelWrapper(emb_size=200, hidden_size=64, method='ggnn')
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     train_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'train.prop')))
-    train_metirc = AnalogyEval(args.subprop_file, method='auc_map', reduction='property', prop_set=train_prop_set)
+    train_metirc = AnalogyEval(args.subprop_file, method='auc_map',
+                               reduction='property', prop_set=train_prop_set)
     dev_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'dev.prop')))
     dev_metric = AnalogyEval(args.subprop_file, method='auc_map',
-                             reduction='property', prop_set=dev_prop_set, debug=True)
+                             reduction='property', prop_set=dev_prop_set, debug=False)
 
-    for epoch in range(20):
+    # train and evaluate
+    for epoch in range(100):
 
         print('epoch {}'.format(epoch + 1))
         if epoch == 0:
-            dev_pred, dev_loss = one_epoch('dev', dataloader, optimizer)
+            dev_pred, dev_loss = one_epoch('dev', dev_dataloader, optimizer, device=device)
             print('init')
             print(np.mean(dev_loss), dev_metric.eval(dev_pred))
 
-        train_pred, train_loss = one_epoch('train', dataloader, optimizer)
-        dev_pred, dev_loss = one_epoch('dev', dataloader, optimizer)
+        train_pred, train_loss = one_epoch('train', train_dataloader, optimizer, device=device)
+        dev_pred, dev_loss = one_epoch('dev', dev_dataloader, optimizer, device=device)
 
-        #print('{:>.3f}\t{:>.3f}\t{:>.3f}\t{:>.3f}'.format(
-        #    np.mean(train_loss), np.mean(dev_loss), train_metirc.eval(train_pred), dev_metric.eval(dev_pred)))
         print('tr_loss: {:>.3f}\tdev_loss: {:>.3f}'.format(np.mean(train_loss), np.mean(dev_loss)))
-        print(train_metirc.eval(train_pred), dev_metric.eval(dev_pred))
+        print('accuracy')
+        print(train_metirc.eval_by('property', 'accuracy', train_pred),
+              dev_metric.eval_by('property', 'accuracy', dev_pred))
+        print('ranking')
+        print(train_metirc.eval_by('property', 'auc_map', train_pred),
+              dev_metric.eval_by('property', 'auc_map', dev_pred))

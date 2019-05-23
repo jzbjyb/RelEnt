@@ -88,10 +88,39 @@ def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
     return result
 
 
+def read_multi_pointiwse_file(filepath,
+                              filter_prop: set = None,
+                              keep_one_per_prop: bool = False) \
+        -> List[Tuple[Tuple[str, Tuple], Tuple[str, Tuple], int]]:
+    result = []
+    seen_prop = set()
+    with open(filepath, 'r') as fin:
+        for l in fin:
+            label, p1o, p2o = l.strip().split('\t')
+            label = int(label)
+            p1 = p1o.split(' ')
+            p2 = p2o.split(' ')
+            assert len(p1) % 2 == 1 and len(p1) % 2 == 1, 'pointwise file format error'
+            p1occs = tuple(tuple(p1[i * 2 + 1:i * 2 + 3]) for i in range((len(p1) - 1) // 2))
+            p2occs = tuple(tuple(p2[i * 2 + 1:i * 2 + 3]) for i in range((len(p2) - 1) // 2))
+            p1 = p1[0]
+            p2 = p2[0]
+            if filter_prop and (p1 not in filter_prop or p2 not in filter_prop):
+                continue
+            if keep_one_per_prop and (p1, p2) in seen_prop:
+                continue
+            if keep_one_per_prop:
+                seen_prop.add((p1, p2))
+                seen_prop.add((p2, p1))
+            result.append(((p1, p1occs), (p2, p2occs), label))
+    return result
+
+
 def read_pointiwse_file(filepath,
                         filter_prop: set = None,
                         keep_one_per_prop: bool = False) \
         -> List[Tuple[Tuple[str, str, str], Tuple[str, str, str], int]]:
+    print('deprecated')
     result = []
     seen_prop = set()
     with open(filepath, 'r') as fin:

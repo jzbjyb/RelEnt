@@ -75,7 +75,8 @@ class PropertySubgraph():
                 except KeyError:
                     raise DataPrepError
             else:
-                raise NotImplementedError
+                # when id2ind does not exist, use padding_ind
+                emb_ind = np.array([self.padding_ind] * len(id2ind))
 
             return id2ind, adjs, emb_ind, [0]
 

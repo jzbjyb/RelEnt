@@ -120,8 +120,6 @@ if __name__ == '__main__':
                                          os.path.join(args.dataset_dir, 'dev.pointwise'),
                                          os.path.join(args.dataset_dir, 'test.pointwise'),
                                          args.subgraph_file,
-                                         emb_file=args.emb_file if not args.filter_emb else None,
-                                         emb_size=None if not args.filter_emb else 32,
                                          edge_type='one')
         print('#ids {}'.format(len(dataloader.all_ids)))
         filer_embedding(args.emb_file, 'data/test.emb', dataloader.all_ids)

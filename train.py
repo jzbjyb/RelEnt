@@ -65,16 +65,16 @@ class ModelWrapper(nn.Module):
         return logits, loss
 
 
-def one_epoch(split, dataloader, optimizer, device):
+def one_epoch(split, dataloader, optimizer, device, show_progress=True):
     loss_li, pred_li = [], []
     if split == 'train':
         model.train()
         #iter = tqdm(dataloader.batch_iter(split, batch_size=1024, batch_per_epoch=100, repeat=True))
-        iter = tqdm(dataloader)
+        iter = tqdm(dataloader, disable=not show_progress)
     else:
         model.eval()
         #iter = tqdm(dataloader.batch_iter(split, batch_size=1024, restart=True))
-        iter = tqdm(dataloader)
+        iter = tqdm(dataloader, disable=not show_progress)
     for batch in iter:
         #logits, loss = model(*pointwise_batch_to_tensor(batch, device))
         batch_dict, label = batch
@@ -165,21 +165,25 @@ if __name__ == '__main__':
                              reduction='property', prop_set=dev_prop_set, debug=False)
 
     # train and evaluate
+    show_progress = False
     for epoch in range(100):
 
         print('epoch {}'.format(epoch + 1))
         if epoch == 0:
-            dev_pred, dev_loss = one_epoch('dev', dev_dataloader, optimizer, device=device)
+            dev_pred, dev_loss = one_epoch('dev', dev_dataloader, optimizer,
+                                           device=device, show_progress=show_progress)
             print('init')
             print(np.mean(dev_loss), dev_metric.eval(dev_pred))
 
-        train_pred, train_loss = one_epoch('train', train_dataloader, optimizer, device=device)
-        dev_pred, dev_loss = one_epoch('dev', dev_dataloader, optimizer, device=device)
+        train_pred, train_loss = one_epoch('train', train_dataloader, optimizer,
+                                           device=device, show_progress=show_progress)
+        dev_pred, dev_loss = one_epoch('dev', dev_dataloader, optimizer,
+                                       device=device, show_progress=show_progress)
 
         print('tr_loss: {:>.3f}\tdev_loss: {:>.3f}'.format(np.mean(train_loss), np.mean(dev_loss)))
         print('accuracy')
         print(train_metirc.eval_by('property', 'accuracy', train_pred),
               dev_metric.eval_by('property', 'accuracy', dev_pred))
-        #print('ranking')
-        #print(train_metirc.eval_by('property', 'auc_map', train_pred),
-        #      dev_metric.eval_by('property', 'auc_map', dev_pred))
+        print('correct_position')
+        print(train_metirc.eval_by('property', 'correct_position', train_pred),
+              dev_metric.eval_by('property', 'correct_position', dev_pred))

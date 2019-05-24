@@ -31,9 +31,10 @@ class AnalogyEval():
         elif method == 'parent':
             self.is_true = self.is_parent
 
-        assert metric in {'accuracy', 'auc_map'}
+        assert metric in {'accuracy', 'auc_map', 'correct_position'}
         # 'accuracy': property pair level accuracy
         # 'auc_map': auc and ap for each ranking of property
+        # 'correct_position': whether the property goes in the correct position
         self.metric = metric
 
         assert reduction in {'sample', 'property'}
@@ -50,6 +51,14 @@ class AnalogyEval():
         self._property_accuracy_cache = {}
 
 
+    def collect_property_score(self, predictions: List[Tuple[str, str, float]]) -> Dict[Tuple[str, str], float]:
+        prop_score = defaultdict(lambda: [])
+        for prop1, prop2, p in predictions:
+            prop_score[(prop1, prop2)].append(p)
+        prop_score = dict((k, np.mean(v)) for k, v in prop_score.items())
+        return prop_score
+
+
     def property_accuracy_comp(self, result: Dict[str, Tuple[float, bool]]):
         for k in result:
             if k in self._property_accuracy_cache and self._property_accuracy_cache[k][1] != result[k][1]:
@@ -58,39 +67,37 @@ class AnalogyEval():
 
 
     def property_accuracy(self, predictions: List[Tuple[str, str, float]]):
-        result = defaultdict(lambda: [])
-        for prop1, prop2, p in predictions:
-            result[(prop1, prop2)].append(p)
-        result = dict((k, np.mean(v)) for k, v in result.items())
+        prop_score = self.collect_property_score(predictions)
+
         correct, wrong = 0, 0
         tp, tn, fp, fn = [0] * 4
         tp_, tn_, fp_, fn_ = [], [], [], []
-        for k in result:
-            v = result[k]
+        for k in prop_score:
+            v = prop_score[k]
             if v >= 0.5 and k in self.is_true:
                 tp += 1
                 correct += 1
-                result[k] = (result[k], True)
+                prop_score[k] = (prop_score[k], True)
                 tp_.append(k)
             elif v < 0.5 and k not in self.is_true:
                 tn += 1
                 correct += 1
-                result[k] = (result[k], True)
+                prop_score[k] = (prop_score[k], True)
                 tn_.append(k)
             elif v >= 0.5 and k not in self.is_true:
                 fp += 1
                 wrong += 1
-                result[k] = (result[k], False)
+                prop_score[k] = (prop_score[k], False)
                 fp_.append(k)
             else:
                 fn += 1
                 wrong += 1
-                result[k] = (result[k], False)
+                prop_score[k] = (prop_score[k], False)
                 fn_.append(k)
 
         if self.debug:
             print('predictions changes:')
-            self.property_accuracy_comp(result)
+            self.property_accuracy_comp(prop_score)
             def format_prop(prop_li):
                 prop_li = [(p1 + ': ' + self.pid2plabel[p1],
                             p2 + ': ' + self.pid2plabel[p2]) for p1, p2 in prop_li]
@@ -119,10 +126,7 @@ class AnalogyEval():
 
     def property_auc_map(self, predictions: List[Tuple[str, str, float]]):
         # get property average score
-        prop_score = defaultdict(lambda: [])
-        for prop1, prop2, p in predictions:
-            prop_score[(prop1, prop2)].append(p)
-        prop_score = dict((k, np.mean(v)) for k, v in prop_score.items())
+        prop_score = self.collect_property_score(predictions)
 
         # get ranking
         ranks = defaultdict(lambda: {'scores': [], 'labels': []})
@@ -153,6 +157,18 @@ class AnalogyEval():
         return {'count': len(auc_dict),
                 'AUC': np.mean(list(auc_dict.values())),
                 'MAP': np.mean(list(ap_dict.values()))}
+
+
+    def property_correct_position(self, predictions: List[Tuple[str, str, float]]):
+        if self.method == 'parent':
+            prop_score = self.collect_property_score(predictions)
+            child2parents = defaultdict(lambda: [])
+            for (p, c), score in prop_score.items():
+                child2parents[c].append((p, score, (p, c) in self.is_true))
+            acc = [int(sorted(child2parents[c], key=lambda x: -x[1])[0][2]) for c in child2parents]
+            return np.mean(acc), len(acc)
+        else:
+            raise NotImplementedError
 
 
     def eval(self, predictions: List[Tuple[str, str, float]]):

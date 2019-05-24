@@ -105,9 +105,17 @@ def read_multi_pointiwse_file(filepath,
             p2occs = tuple(tuple(p2[i * 2 + 1:i * 2 + 3]) for i in range((len(p2) - 1) // 2))
             p1 = p1[0]
             p2 = p2[0]
+            if p1 == p2:
+                # pairs of two same properties should not be considered
+                # TODO: this is just a workaround. An exception should be raised
+                continue
             if filter_prop and (p1 not in filter_prop or p2 not in filter_prop):
                 continue
             if keep_one_per_prop and (p1, p2) in seen_prop:
+                continue
+            if len(set(p1occs) & set(p2occs)) > 0:
+                # skip examples where two subgraphs overlap
+                # TODO: this is just a workaround. An exception should be raised
                 continue
             if keep_one_per_prop:
                 seen_prop.add((p1, p2))

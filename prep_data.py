@@ -163,6 +163,7 @@ if __name__ == '__main__':
                         yield p1, p2, int((p1, p2) in is_sibling)
             elif args.method in {'by_entail'}:
                 def pair_iter():
+                    # TODO: bug, prop_split might overlap with parent_prop
                     yield from product(parent_prop, prop_split)
                 def pair_label_iter():
                     for p1, p2 in pair_iter():

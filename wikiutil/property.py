@@ -88,6 +88,29 @@ def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
     return result
 
 
+def read_nway_file(filepath,
+                   filter_prop: set = None,
+                   keep_one_per_prop: bool = False) -> List[Tuple[Tuple[str, Tuple], int]]:
+    result = []
+    seen_prop = set()
+    with open(filepath, 'r') as fin:
+        for l in fin:
+            label, poccs = l.strip().split('\t')
+            label = int(label)
+            poccs = poccs.split(' ')
+            assert len(poccs) % 2 == 1, 'nway file format error'
+            occs = tuple(tuple(poccs[i * 2 + 1:i * 2 + 3]) for i in range((len(poccs) - 1) // 2))
+            pid = poccs[0]
+            if filter_prop and pid not in filter_prop:
+                continue
+            if keep_one_per_prop and pid in seen_prop:
+                continue
+            if keep_one_per_prop:
+                seen_prop.add(pid)
+            result.append(((pid, occs), label))
+    return result
+
+
 def read_multi_pointiwse_file(filepath,
                               filter_prop: set = None,
                               keep_one_per_prop: bool = False) \
@@ -113,13 +136,13 @@ def read_multi_pointiwse_file(filepath,
                 continue
             if keep_one_per_prop and (p1, p2) in seen_prop:
                 continue
+            if keep_one_per_prop:
+                seen_prop.add((p1, p2))
+                seen_prop.add((p2, p1))
             if len(set(p1occs) & set(p2occs)) > 0:
                 # skip examples where two subgraphs overlap
                 # TODO: this is just a workaround. An exception should be raised
                 continue
-            if keep_one_per_prop:
-                seen_prop.add((p1, p2))
-                seen_prop.add((p2, p1))
             result.append(((p1, p1occs), (p2, p2occs), label))
     return result
 
@@ -255,6 +278,12 @@ class PropertyOccurrence():
     def group_occs(self, pid, size) -> List[List[Tuple]]:
         occs = self.pid2occs[pid]
         return [occs[i:i+size] for i in range(0, len(occs), size)]
+
+
+    def get_all_occs(self, pid: str, num_sample: int) -> Iterable[List]:
+        occs = self._pid2multioccs[pid]
+        for i in range(min(num_sample, len(occs))):
+            yield occs[i]
 
 
     def get_all_pairs(self, pid1: str, pid2: str, num_sample: int) -> Iterable[Tuple[List, List]]:

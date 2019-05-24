@@ -9,26 +9,31 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from multiprocessing import Manager
-from wikiutil.data import PointwiseDataLoader, PointwiseDataset
+from wikiutil.data import PointwiseDataset, NwayDataset
 from wikiutil.util import load_embedding, filer_embedding
 from wikiutil.metric import AnalogyEval
 from wikiutil.property import read_prop_file, read_subgraph_file
 from analogy.ggnn import GatedGraphNeuralNetwork
 
 
-class ModelWrapper(nn.Module):
+class Model(nn.Module):
     def __init__(self,
-                 emb_size: int,
+                 num_class: int = 1,  # number of classes for prediction
+                 num_graph: int = 2,  # number of graphs in data dict
+                 emb_size: int = 100,
                  vocab_size: int = None,
                  padding_ind: int = 0,  # TODO: add padding index
                  emb: np.ndarray = None,
                  hidden_size: int = 64,
                  method: str = 'ggnn'):
-        super(ModelWrapper, self).__init__()
+        super(Model, self).__init__()
         assert method in {'ggnn', 'emb'}
         self.method = method
+        self.num_class = num_class
+        self.num_graph = num_graph
         # get embedding
         if emb is not None:  # init from pre-trained
+            vocab_size, emb_size = emb.shape
             self.emb = nn.Embedding.from_pretrained(torch.tensor(emb), freeze=True)
         else:  # random init
             self.emb = nn.Embedding(vocab_size, emb_size, padding_idx=padding_ind)
@@ -37,18 +42,18 @@ class ModelWrapper(nn.Module):
         self.emb_proj = nn.Linear(emb_size, hidden_size)
         self.gnn = GatedGraphNeuralNetwork(hidden_size=hidden_size, num_edge_types=1,
                                            layer_timesteps=[3, 3], residual_connections={})
-        self.binary_cla = nn.Sequential(
+        self.cla = nn.Sequential(
             nn.Dropout(p=0.2),
-            nn.Linear(hidden_size * 2, hidden_size),
+            nn.Linear(hidden_size * num_graph, hidden_size),
             nn.ReLU(),
             nn.Dropout(p=0.2),
-            nn.Linear(hidden_size, 1)
+            nn.Linear(hidden_size, num_class)
         )
 
 
     def forward(self, data: Dict, labels: torch.LongTensor):
         ge_list = []
-        for i in range(2):
+        for i in range(self.num_graph):
             # get representation
             ge = self.emb_proj(self.emb(data['emb_ind'][i]))
             if self.method == 'ggnn':
@@ -59,9 +64,16 @@ class ModelWrapper(nn.Module):
             ge = torch.index_select(ge, 0, data['prop_ind'][i])
             ge_list.append(ge)
         # match
-        logits = torch.sigmoid(self.binary_cla(torch.cat(ge_list, -1)))
-        labels = labels.float()
-        loss = nn.BCELoss()(logits.squeeze(), labels)
+        ge = torch.cat(ge_list, -1)
+        if self.num_class == 1:
+            # binary classification loss
+            logits = torch.sigmoid(self.cla(ge))
+            labels = labels.float()
+            loss = nn.BCELoss()(logits.squeeze(), labels)
+        else:
+            # cross-entropy loss
+            logits = self.cla(ge)
+            loss = nn.CrossEntropyLoss()(logits, labels)
         return logits, loss
 
 
@@ -69,14 +81,11 @@ def one_epoch(split, dataloader, optimizer, device, show_progress=True):
     loss_li, pred_li = [], []
     if split == 'train':
         model.train()
-        #iter = tqdm(dataloader.batch_iter(split, batch_size=1024, batch_per_epoch=100, repeat=True))
         iter = tqdm(dataloader, disable=not show_progress)
     else:
         model.eval()
-        #iter = tqdm(dataloader.batch_iter(split, batch_size=1024, restart=True))
         iter = tqdm(dataloader, disable=not show_progress)
     for batch in iter:
-        #logits, loss = model(*pointwise_batch_to_tensor(batch, device))
         batch_dict, label = batch
         batch_dict = dict((k, [t.to(device) for t in batch_dict[k]]) for k in batch_dict if k != 'meta')
         label = label.to(device)
@@ -88,16 +97,21 @@ def one_epoch(split, dataloader, optimizer, device, show_progress=True):
             optimizer.step()
 
         loss_li.append(loss.item())
-        #pred_li.extend([(g1.pid, g2.pid, logits[i].item()) for i, (g1, g2, label) in enumerate(batch)])
+        # TODO: add classifier
+        '''
         pred_li.extend([(pid1, pid2, logits[i].item())
                         for i, (pid1, pid2) in
                         enumerate(zip(batch[0]['meta']['pid1'], batch[0]['meta']['pid2']))])
+        '''
+
     return pred_li, loss_li
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('train analogy model')
     parser.add_argument('--dataset_dir', type=str, required=True, help='dataset dir')
+    parser.add_argument('--dataset_format', type=str, choices=['pointwise', 'nway'],
+                        default='pointwise', help='dataset format')
     parser.add_argument('--subgraph_file', type=str, required=True, help='entity subgraph file')
     parser.add_argument('--subprop_file', type=str, required=True, help='subprop file')
     parser.add_argument('--emb_file', type=str, default=None, help='embedding file')
@@ -114,49 +128,46 @@ if __name__ == '__main__':
     else:
         device = torch.device('cuda')
 
-    # filter emb
+    # get dataset class and configs
+    num_class_dict = {'nway': 16, 'pointwise': 1}
+    num_graph_dict = {'nway': 1, 'pointwise': 2}
+    Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
+    get_dataset_filepath = lambda split: os.path.join(args.dataset_dir, split + '.' + args.dataset_format)
+
+    # load subgraph
+    subgraph_dict = read_subgraph_file(args.subgraph_file)
+
+    # filter emb by dry run datasets
     if args.filter_emb:
-        dataloader = PointwiseDataLoader(os.path.join(args.dataset_dir, 'train.pointwise'),
-                                         os.path.join(args.dataset_dir, 'dev.pointwise'),
-                                         os.path.join(args.dataset_dir, 'test.pointwise'),
-                                         args.subgraph_file,
-                                         edge_type='one')
-        print('#ids {}'.format(len(dataloader.all_ids)))
-        filer_embedding(args.emb_file, 'data/test.emb', dataloader.all_ids)
+        all_ids = set()
+        for split in ['train', 'dev', 'test']:
+            ds = Dataset(get_dataset_filepath(split), subgraph_dict, edge_type='one')
+            all_ids.update(ds.collect_ids())
+        print('#ids {}'.format(len(all_ids)))
+        filer_embedding(args.emb_file, 'data/test.emb', all_ids)
         exit(1)
 
-    # load subgraph and embedding
-    subgraph_dict = read_subgraph_file(args.subgraph_file)
+    # load embedding
     id2ind, emb = load_embedding(args.emb_file, debug=False, emb_size=200) if args.emb_file else (None, None)
-    '''
-    # TODO debug
-    class emb_dict_cls():
-        def __getitem__(self, item):
-            return [0.1] * 200
-    emb_dict = emb_dict_cls()
-    '''
 
     # load data
-    train_data = PointwiseDataset(os.path.join(args.dataset_dir, 'train.pointwise'),
-                                  subgraph_dict,
-                                  id2ind=id2ind,
-                                  edge_type='one',
-                                  keep_one_per_prop=True,
-                                  neg_ratio=5)
+    train_data = Dataset(get_dataset_filepath('train'), subgraph_dict,
+                         id2ind=id2ind, edge_type='one', keep_one_per_prop=False)
     train_dataloader = DataLoader(train_data, batch_size=128, shuffle=True,
                                   num_workers=1, collate_fn=train_data.collate_fn)
-    dev_data = PointwiseDataset(os.path.join(args.dataset_dir, 'dev.pointwise'),
-                                subgraph_dict,
-                                id2ind=id2ind,
-                                edge_type='one',
-                                keep_one_per_prop=True)
+    dev_data = Dataset(get_dataset_filepath('dev'), subgraph_dict,
+                       id2ind=id2ind, edge_type='one', keep_one_per_prop=False)
     dev_dataloader = DataLoader(dev_data, batch_size=128, shuffle=False,
                                 num_workers=1, collate_fn=dev_data.collate_fn)
 
     # config model, optimizer and evaluation
-    model = ModelWrapper(emb_size=200, emb=emb, hidden_size=64, method='emb')
+    model = Model(num_class=num_class_dict[args.dataset_format],
+                  num_graph=num_graph_dict[args.dataset_format],
+                  emb=emb,
+                  hidden_size=64,
+                  method='emb')
     model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     train_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'train.prop')))
     train_metirc = AnalogyEval(args.subprop_file, method='parent', metric='auc_map',
                                reduction='property', prop_set=train_prop_set)
@@ -165,7 +176,7 @@ if __name__ == '__main__':
                              reduction='property', prop_set=dev_prop_set, debug=False)
 
     # train and evaluate
-    show_progress = False
+    show_progress = True
     for epoch in range(100):
 
         print('epoch {}'.format(epoch + 1))
@@ -181,9 +192,11 @@ if __name__ == '__main__':
                                        device=device, show_progress=show_progress)
 
         print('tr_loss: {:>.3f}\tdev_loss: {:>.3f}'.format(np.mean(train_loss), np.mean(dev_loss)))
+        '''
         print('accuracy')
         print(train_metirc.eval_by('property', 'accuracy', train_pred),
               dev_metric.eval_by('property', 'accuracy', dev_pred))
         print('correct_position')
         print(train_metirc.eval_by('property', 'correct_position', train_pred),
               dev_metric.eval_by('property', 'correct_position', dev_pred))
+        '''

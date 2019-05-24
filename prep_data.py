@@ -8,9 +8,9 @@ import argparse, os, random, time
 from itertools import combinations, product
 from tqdm import tqdm
 import numpy as np
-from wikiutil.property import read_subprop_file, get_all_subtree, read_prop_occ_file_from_dir, \
+from wikiutil.property import read_subprop_file, get_all_subtree, \
     get_is_sibling, read_subgraph_file, get_is_parent, PropertyOccurrence
-from wikiutil.util import read_emb_ids, save_emb_ids
+from wikiutil.util import read_emb_ids, save_emb_ids, DefaultOrderedDict
 
 
 if __name__ == '__main__':
@@ -30,11 +30,11 @@ if __name__ == '__main__':
     parser.add_argument('--num_occ_per_subgraph', type=int, default=1,
                         help='number of occurrences used for each property subgraph')
     parser.add_argument('--method', type=str, default='by_tree',
-                        choices=['by_tree', 'within_tree', 'by_entail'])
+                        choices=['by_tree', 'within_tree', 'by_entail', 'by_entail-n_way'])
     parser.add_argument('--contain_train', action='store_true',
                         help='whether dev and test contain training properties')
-    parser.add_argument('--num_per_prop_pair', type=int, default=10000,
-                        help='number of pairs to sample for each property pair')
+    parser.add_argument('--num_sample', type=int, default=10000,
+                        help='number of pairs to sample/sample for each property pair/property')
     args = parser.parse_args()
 
     random.seed(2019)
@@ -57,7 +57,7 @@ if __name__ == '__main__':
     subgraph_dict = read_subgraph_file(args.subgraph_file)
     #save_emb_ids(args.emb_file, args.emb_file + '.id')
     emb_set = read_emb_ids(args.emb_file)
-    poccs = PropertyOccurrence.build(all_propids, args.prop_dir,
+    poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
                                      subgraph_dict=subgraph_dict,
                                      emb_set=emb_set,
                                      max_occ_per_prop=args.max_occ_per_prop,
@@ -104,7 +104,7 @@ if __name__ == '__main__':
                 dev_prop.extend(dev_p)
                 test_prop.extend(test_p)
 
-    elif args.method == 'by_entail':
+    elif args.method == 'by_entail' or args.method == 'by_entail-n_way':
         # split each tir in a subtree into train/dev/test by viewing parent property as label
         parent_prop, train_prop, dev_prop, test_prop = [], [], [], []
         for subtree in subtrees:
@@ -130,6 +130,7 @@ if __name__ == '__main__':
     is_sibling = get_is_sibling(subprops)
     is_parent = get_is_parent(subprops)
     final_prop_split: Dict[str, str] = defaultdict(lambda: '*')
+    label2id = DefaultOrderedDict(lambda: len(label2id))  # collect labels
     for prop_split_name in ['train_prop', 'dev_prop', 'test_prop']:
         prop_split = eval(prop_split_name)
 
@@ -141,12 +142,17 @@ if __name__ == '__main__':
         for p in prop_split:
             final_prop_split[p] = prop_split_name
 
+        def format_occs(pid, poccs):
+            # "pid _ occ1_head _ occ1_tail _ occ2_head _ occ2_tail ..." where _ is space
+            return '{} {}'.format(pid, ' '.join(map(lambda occ: ' '.join(occ), poccs)))
+
         def get_all_pairs(pid1, pid2):
-            def format(pid, poccs):
-                # "pid _ occ1 _ occ1 _ occ2 _ occ2 ..." where _ is space
-                return '{} {}'.format(pid, ' '.join(map(lambda occ: ' '.join(occ), poccs)))
-            for p1occs, p2occs in poccs.get_all_pairs(pid1, pid2, args.num_per_prop_pair):
-                yield format(pid1, p1occs), format(pid2, p2occs)
+            for p1occs, p2occs in poccs.get_all_pairs(pid1, pid2, args.num_sample):
+                yield format_occs(pid1, p1occs), format_occs(pid2, p2occs)
+
+        def get_all_occs(pid):
+            for occs in poccs.get_all_occs(pid, args.num_sample):
+                yield format_occs(pid, occs)
 
         # generate pair of property occurrences for binary classification
         if args.method in {'by_tree', 'within_tree', 'by_entail'}:
@@ -173,7 +179,21 @@ if __name__ == '__main__':
                     for p1o, p2o in get_all_pairs(p1, p2):
                         fout.write('{}\t{}\t{}\n'.format(label, p1o, p2o))
 
-    if args.method in {'within_tree', 'by_entail'}:
+        # generate n way classification data
+        elif args.method in {'by_entail-n_way'}:
+            data_filename = os.path.join(args.out_dir, prop_split_name.split('_')[0] + '.nway')
+            print(data_filename)
+            with open(data_filename, 'w') as fout:
+                for p in prop_split:
+                    labels = [parent for parent in parent_prop if (parent, p) in is_parent]
+                    if len(labels) != 1:
+                        print('parents of {} are {}'.format(p, labels))
+                    for label in labels:
+                        for po in get_all_occs(p):
+                            fout.write('{}\t{}\n'.format(label2id[label], po))
+            print('{} labels up to now'.format(len(label2id)))
+
+    if args.method in {'within_tree', 'by_entail', 'by_entail-n_way'}:
         subtrees_remains = [st for st in subtrees if len(set(st.nodes) & set(final_prop_split.keys())) > 0]
         # concat label and split
         final_prop_split = dict((p, pid2plabel[p] + ' ' + final_prop_split[p].upper()) for p in pid2plabel)
@@ -181,3 +201,8 @@ if __name__ == '__main__':
         with open(os.path.join(args.out_dir, 'within_tree_split.txt'), 'w') as fout:
             for st in subtrees_remains:
                 fout.write(st.print(final_prop_split) + '\n\n')
+
+    if args.method in {'by_entail-n_way'}:
+        with open(os.path.join(args.out_dir, 'label2ind.txt'), 'w') as fout:
+            for label, ind in label2id.items():
+                fout.write('{}\t{}\n'.format(label, ind))

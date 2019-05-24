@@ -1,5 +1,4 @@
 from typing import Tuple, List, Any, Dict
-from collections import defaultdict, namedtuple
 from random import shuffle
 from tqdm import tqdm
 from functools import lru_cache
@@ -8,7 +7,8 @@ import multiprocessing
 from multiprocessing import Manager
 import torch
 from torch.utils.data import Dataset
-from .property import read_subgraph_file, read_multi_pointiwse_file
+from .property import read_multi_pointiwse_file, read_nway_file
+from .util import DefaultOrderedDict
 
 
 class DataPrepError(Exception):
@@ -43,7 +43,7 @@ class PropertySubgraph():
 
         if self.edge_type == 'one':
             # build adj list
-            id2ind = defaultdict(lambda: len(id2ind))  # entity/proerty id to index mapping
+            id2ind = DefaultOrderedDict(lambda: len(id2ind))  # entity/proerty id to index mapping
             _ = id2ind[self.pid]  # make sure that the central property is alway indexed as 0
             adjs = []
             for i, (hid, tid) in enumerate(self.occurrences):
@@ -68,10 +68,9 @@ class PropertySubgraph():
                     raise DataPrepError
 
             # build emb index
-            ind2id = dict((v, k) for k, v in id2ind.items())
             if self.id2ind:
                 try:
-                    emb_ind = np.array([self.id2ind[ind2id[i].split('-')[0]] for i in range(len(id2ind))])
+                    emb_ind = np.array([self.id2ind[k.split('-')[0]] for k, v in id2ind.items()])
                 except KeyError:
                     raise DataPrepError
             else:
@@ -122,7 +121,49 @@ class AdjacencyList:
         return self.data[item]
 
 
-class PointwiseDataset(Dataset):
+class PropertyDataset(Dataset):
+    def __init__(self,
+                 subgraph_dict: Dict[str, List],
+                 id2ind: Dict[str, int] = None,
+                 padding_ind: int = 0,
+                 edge_type: str = 'one'):
+        self.subgraph_dict = subgraph_dict
+        assert edge_type in {'one'}
+        # 'one' means only use a single type of edge to link properties and entities
+        self.edge_type = edge_type
+        self.id2ind = id2ind
+        self.padding_ind = padding_ind
+
+
+    def pos_neg_filter(self, samples: List[Tuple], neg_ratio: int = 3):
+        pos = [s for s in samples if s[-1] > 0]
+        neg = [s for s in samples if s[-1] == 0]
+        shuffle(neg)
+        return pos + neg[:len(pos) * neg_ratio]
+
+
+    def getids(self, getitem_result) -> set:
+        ''' get the ids from the return of __getitem__ '''
+        raise NotImplementedError
+
+
+    def collect_ids(self) -> set:
+        print('collecting ids ...')
+        ids = set()
+        for i in tqdm(range(self.__len__())):
+            ids.update(self.getids(self.__getitem__(i)))
+        return ids
+
+
+    #@lru_cache(maxsize=10000)  # result in out-of-memory error
+    def create_subgraph(self, property_occ: Tuple[str, Tuple[Tuple[str, str]]]) -> PropertySubgraph:
+        pid, occs = property_occ
+        sg = PropertySubgraph(
+            pid, occs, self.subgraph_dict, self.id2ind, self.padding_ind, self.edge_type)
+        return sg
+
+
+class PointwiseDataset(PropertyDataset):
     def __init__(self,
                  filepath: str,
                  subgraph_dict: Dict[str, List],
@@ -133,17 +174,12 @@ class PointwiseDataset(Dataset):
                  keep_one_per_prop: bool = False,
                  neg_ratio: int = None,
                  manager: Manager = None):
+        super(PointwiseDataset, self).__init__(subgraph_dict, id2ind, padding_ind, edge_type)
         print('load data from {} ...'.format(filepath))
         self.inst_list = read_multi_pointiwse_file(
             filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
         if neg_ratio:
             self.inst_list = self.pos_neg_filter(self.inst_list, neg_ratio=neg_ratio)
-        self.subgraph_dict = subgraph_dict
-        assert edge_type in {'one'}
-        # 'one' means only use a single type of edge to link properties and entities
-        self.edge_type = edge_type
-        self.id2ind = id2ind
-        self.padding_ind = padding_ind
 
         # to support multiprocess, use manager to share these objects between processes and avoid copy-on-write
         # manager is quite slow because of the communication between processes
@@ -151,14 +187,6 @@ class PointwiseDataset(Dataset):
             assert type(id2ind) is type(subgraph_dict) is multiprocessing.managers.DictProxy
             self.inst_list = manager.list(self.inst_list)
         # TODO: use numpy array or shared array to avoid copy-on-write
-
-
-    def pos_neg_filter(self, samples: List[Tuple[Any, Any, int]], neg_ratio: int = 3):
-        # used to filter negative samples for pointwise methods
-        pos = [s for s in samples if s[2] > 0]
-        neg = [s for s in samples if s[2] == 0]
-        shuffle(neg)
-        return pos + neg[:len(pos) * neg_ratio]
 
 
     def __len__(self):
@@ -170,12 +198,9 @@ class PointwiseDataset(Dataset):
         return self.create_subgraph(p1o), self.create_subgraph(p2o), label
 
 
-    #@lru_cache(maxsize=10000)  # result in out-of-memory error
-    def create_subgraph(self, property_occ: Tuple[str, Tuple[Tuple[str, str]]]) -> PropertySubgraph:
-        pid, occs = property_occ
-        sg = PropertySubgraph(
-            pid, occs, self.subgraph_dict, self.id2ind, self.padding_ind, self.edge_type)
-        return sg
+    def getids(self, getitem_result):
+        g1, g2, _ = getitem_result
+        return set(g1.id2ind.keys()) | set(g2.id2ind.keys())
 
 
     def collate_fn(self, insts: List):
@@ -196,150 +221,44 @@ class PointwiseDataset(Dataset):
                torch.LongTensor(labels)
 
 
-class PointwiseDataLoader():
+class NwayDataset(PropertyDataset):
     def __init__(self,
-                 train_file: str,
-                 dev_file: str,
-                 test_file: str,
-                 subgraph_file: str,
+                 filepath: str,
+                 subgraph_dict: Dict[str, List],
                  id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
                  edge_type: str = 'one',
                  filter_prop: set = None,
-                 keep_one_per_prop: bool = False,
-                 num_worker: int = 1,
-                 neg_ratio: int = 0):
-        print('load data ...')
-        self.train_list = read_multi_pointiwse_file(
-            train_file, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
-        if neg_ratio:
-            self.train_list = self.pos_neg_filter(self.train_list, neg_ratio=neg_ratio)
-        self.dev_list = read_multi_pointiwse_file(
-            dev_file, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
-        self.test_list = read_multi_pointiwse_file(
-            test_file, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
-        self.subgraph_dict = read_subgraph_file(subgraph_file)
-        assert edge_type in {'one'}
-        # 'one' means only use a single type of edge to link properties and entities
-        self.edge_type = edge_type
-        self.id2ind = id2ind
-        self.padding_ind = padding_ind
-        print('prep data ...')
-        self.all_ids = set()  # all the entity ids and property ids used
-        self._subgraph_cache: Dict[Tuple[str, str, str], PropertySubgraph] = {}  # cache subgraphs
-        self._cache_lock = multiprocessing.Value('i', 0)
-        self.num_worker = num_worker
-        self.train_graph = self.create_pointwise_samples(self.train_list)
-        print('train {} -> {}'.format(len(self.train_list), len(self.train_graph)))
-        self.dev_graph = self.create_pointwise_samples(self.dev_list)
-        print('dev {} -> {}'.format(len(self.dev_list), len(self.dev_graph)))
-        self.test_graph = self.create_pointwise_samples(self.test_list)
-        print('test {} -> {}'.format(len(self.test_list), len(self.test_graph)))
+                 keep_one_per_prop: bool = False):
+        super(NwayDataset, self).__init__(subgraph_dict, id2ind, padding_ind, edge_type)
+        print('load data from {} ...'.format(filepath))
+        self.inst_list = read_nway_file(
+            filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
+
+        # TODO: use numpy array or shared array to avoid copy-on-write
 
 
-    def pos_neg_filter(self, samples: List[Tuple[Any, Any, int]], neg_ratio: int = 3):
-        # used to filter negative samples for pointwise methods
-        pos = [s for s in samples if s[2] > 0]
-        neg = [s for s in samples if s[2] == 0]
-        shuffle(neg)
-        return pos + neg[:len(pos) * neg_ratio]
+    def __len__(self):
+        return len(self.inst_list)
 
 
-    def create_pointwise_samples_mutiple_process(self, data: List):
-        # start each worker with a shared return_dict
-        manager = multiprocessing.Manager()
-        return_dict = manager.dict()
-        workers = []
-        len_per_worker = int(np.ceil(len(data) / self.num_worker))
-        for i in range(self.num_worker):
-            data_for_worker = data[i * len_per_worker:(i + 1) * len_per_worker]
-            workder = multiprocessing.Process(target=self.create_pointwise_samples,
-                                              args=(data_for_worker, i, return_dict))
-            workers.append(workder)
-            workder.start()
-
-        # wait for end of each worker
-        for worker in workers:
-            worker.join()
-
-        # merge results
-        result = []
-        for i in range(self.num_worker):
-            result.extend(return_dict[i])
+    def __getitem__(self, idx):
+        poccs, label = self.inst_list[idx]
+        return self.create_subgraph(poccs), label
 
 
-    def create_pointwise_samples(self, data: List, worker_id: int = None, return_dict: Dict = None):
-        result = []
-        for sample in tqdm(data):
-            p1o, p2o, label = sample
-            sample = (self.create_subgraph(p1o), self.create_subgraph(p2o), label)
-            result.append(sample)
-        if worker_id is not None:
-            return_dict[worker_id] = result
-        return result
+    def getids(self, getitem_result):
+        g, _ = getitem_result
+        return set(g.id2ind.keys())
 
 
-    def create_subgraph(self, property_occ: Tuple[str, List[Tuple[str, str]]]) -> PropertySubgraph:
-        pid, occs = property_occ
-        property_occ_hash = pid + ':' + ','.join(map(lambda occ: '-'.join(occ), occs))
-        if property_occ_hash not in self._subgraph_cache:
-            sg = PropertySubgraph(
-                pid, occs, self.subgraph_dict, self.id2ind, self.padding_ind, self.edge_type)
-            # TODO: add multiprocess with lock
-            #with self._cache_lock.get_lock():
-            if property_occ_hash not in self._subgraph_cache:
-                self._subgraph_cache[property_occ_hash] = sg
-                self.all_ids.update(set(sg.id2ind.keys()))
-        return self._subgraph_cache[property_occ_hash]
-
-
-    def renew_data_iter(self, split='train'):
-        data = getattr(self, split + '_graph')
-        def iter(split, data):
-            if split == 'train':  # shuffle train data
-                perm = np.random.permutation(len(data))
-            else:
-                perm = range(len(data))
-            for i in perm:
-                yield data[i]
-        setattr(self, split + '_iter', iter(split, data))
-
-
-    def get_data_iter(self, split='train'):
-        name = split + '_iter'
-        if not hasattr(self, name):
-            self.renew_data_iter(split)
-        return getattr(self, name)
-
-
-    def batch_iter(self,
-                   split='train',
-                   batch_size=64,
-                   batch_per_epoch: int = None,
-                   repeat: bool = False,
-                   restart: bool = False):
-        assert not (batch_per_epoch is None and repeat), 'this iter won\'t stop'
-        samples = []
-        bs = 0
-        if restart:  # restart iteration
-            self.renew_data_iter(split)
-        iterator = self.get_data_iter(split)
-        while True:
-            try:
-                s = next(iterator)
-                samples.append(s)
-                if len(samples) >= batch_size:
-                    yield samples
-                    bs += 1
-                    if batch_per_epoch is not None and bs >= batch_per_epoch:
-                        break
-                    samples = []
-            except StopIteration:
-                if repeat:
-                    self.renew_data_iter(split)
-                    iterator = self.get_data_iter(split)
-                else:
-                    if len(samples) > 0:
-                        yield samples
-                        samples = []
-                    break
+    def collate_fn(self, insts: List):
+        packed_sg, labels = zip(*insts)
+        pids = [sg.pid for sg in packed_sg]
+        adjs, emb_ind, prop_ind = PropertySubgraph.pack_graphs(packed_sg)
+        adjs = AdjacencyList(node_num=len(adjs), adj_list=adjs)
+        emb_ind = torch.LongTensor(emb_ind)
+        prop_ind = torch.LongTensor(prop_ind)
+        return {'adj': [adjs], 'emb_ind': [emb_ind], 'prop_ind': [prop_ind],
+                'meta': {'pid': pids}}, \
+               torch.LongTensor(labels)

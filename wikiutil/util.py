@@ -1,5 +1,6 @@
 from typing import Dict, Tuple
 import functools, os
+from collections import OrderedDict, Callable
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -123,6 +124,7 @@ def filer_embedding(in_filepath: str,
                     out_filepath: str,
                     ids: set):
     print('filter emb ...')
+    seen_ids = set()
     with open(in_filepath, 'r') as fin, open(out_filepath, 'w') as fout:
         num_entity, num_prop, dim = fin.readline().split('\t')
         for i, l in tqdm(enumerate(fin)):
@@ -133,4 +135,58 @@ def filer_embedding(in_filepath: str,
                 id = id.rsplit('/', 1)[1][:-1]
             if id not in ids:
                 continue
+            seen_ids.add(id)
             fout.write(id + '\t' + ls[1])
+            if len(seen_ids) >= len(ids):
+                break
+
+
+class DefaultOrderedDict(OrderedDict):
+    # Source: http://stackoverflow.com/a/6190500/562769
+    def __init__(self, default_factory=None, *a, **kw):
+        if (default_factory is not None and
+           not isinstance(default_factory, Callable)):
+            raise TypeError('first argument must be callable')
+        OrderedDict.__init__(self, *a, **kw)
+        self.default_factory = default_factory
+
+
+    def __getitem__(self, key):
+        try:
+            return OrderedDict.__getitem__(self, key)
+        except KeyError:
+            return self.__missing__(key)
+
+
+    def __missing__(self, key):
+        if self.default_factory is None:
+            raise KeyError(key)
+        self[key] = value = self.default_factory()
+        return value
+
+
+    def __reduce__(self):
+        if self.default_factory is None:
+            args = tuple()
+        else:
+            args = self.default_factory,
+        return type(self), args, None, None, self.items()
+
+
+    def copy(self):
+        return self.__copy__()
+
+
+    def __copy__(self):
+        return type(self)(self.default_factory, self)
+
+
+    def __deepcopy__(self, memo):
+        import copy
+        return type(self)(self.default_factory,
+                          copy.deepcopy(self.items()))
+
+
+    def __repr__(self):
+        return 'OrderedDefaultDict(%s, %s)' % (self.default_factory,
+                                               OrderedDict.__repr__(self))

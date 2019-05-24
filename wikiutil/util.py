@@ -112,7 +112,10 @@ def load_embedding(filepath, debug=False, emb_size=None) -> Tuple[Dict[str, int]
             if debug:
                 emb.append([0.1] * emb_size)
             else:
-                emb.append(list(map(float, l[1].split('\t'))))
+                l = list(map(float, l[1].split('\t')))
+                if emb_size and len(l) != emb_size:
+                    raise ValueError('emb dim incorrect')
+                emb.append(l)
     return id2ind, np.array(emb, dtype=np.float32)
 
 

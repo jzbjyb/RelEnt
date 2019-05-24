@@ -4,7 +4,7 @@ import numpy as np
 from random import shuffle
 import json
 from sklearn.metrics import precision_recall_curve, auc, average_precision_score
-from .property import read_subprop_file, get_is_sibling, get_all_subtree
+from .property import read_subprop_file, get_is_sibling, get_all_subtree, get_is_parent
 
 
 class AnalogyEval():
@@ -12,7 +12,8 @@ class AnalogyEval():
 
     def __init__(self,
                  subprop_file: str,
-                 method: str = 'accuracy',
+                 method: str = 'sibling',
+                 metric: str = 'accuracy',
                  reduction: str = 'sample',
                  prop_set: set = None,
                  debug: bool = False):
@@ -20,12 +21,20 @@ class AnalogyEval():
         self.subprops = read_subprop_file(subprop_file)
         self.pid2plabel = dict(p[0] for p in self.subprops)
         self.is_sibling = get_is_sibling(self.subprops)
+        self.is_parent = get_is_parent(self.subprops)
         self.subtrees, _ = get_all_subtree(self.subprops)
 
-        assert method in {'accuracy', 'auc_map'}
+        assert method in {'sibling', 'parent'}
+        self.method = method
+        if method == 'sibling':
+            self.is_true = self.is_sibling
+        elif method == 'parent':
+            self.is_true = self.is_parent
+
+        assert metric in {'accuracy', 'auc_map'}
         # 'accuracy': property pair level accuracy
         # 'auc_map': auc and ap for each ranking of property
-        self.method = method
+        self.metric = metric
 
         assert reduction in {'sample', 'property'}
         # 'sample': each sample/occurrence of a property is an evaluation unit
@@ -58,17 +67,17 @@ class AnalogyEval():
         tp_, tn_, fp_, fn_ = [], [], [], []
         for k in result:
             v = result[k]
-            if v >= 0.5 and k in self.is_sibling:
+            if v >= 0.5 and k in self.is_true:
                 tp += 1
                 correct += 1
                 result[k] = (result[k], True)
                 tp_.append(k)
-            elif v < 0.5 and k not in self.is_sibling:
+            elif v < 0.5 and k not in self.is_true:
                 tn += 1
                 correct += 1
                 result[k] = (result[k], True)
                 tn_.append(k)
-            elif v >= 0.5 and k not in self.is_sibling:
+            elif v >= 0.5 and k not in self.is_true:
                 fp += 1
                 wrong += 1
                 result[k] = (result[k], False)
@@ -100,8 +109,8 @@ class AnalogyEval():
     def sample_accuracy(self, predictions: List[Tuple[str, str, float]]):
         correct, wrong = 0, 0
         for prop1, prop2, p in predictions:
-            if (p >= 0.5 and (prop1, prop2) in self.is_sibling) or \
-                    (p < 0.5 and (prop1, prop2) not in self.is_sibling):
+            if (p >= 0.5 and (prop1, prop2) in self.is_true) or \
+                    (p < 0.5 and (prop1, prop2) not in self.is_true):
                 correct += 1
             else:
                 wrong += 1
@@ -120,10 +129,10 @@ class AnalogyEval():
         for (prop1, prop2), p in prop_score.items():
             if self.prop_set is None or prop1 in self.prop_set:
                 ranks[prop1]['scores'].append(p)
-                ranks[prop1]['labels'].append(int((prop1, prop2) in self.is_sibling))
+                ranks[prop1]['labels'].append(int((prop1, prop2) in self.is_true))
             if self.prop_set is None or prop2 in self.prop_set:
                 ranks[prop2]['scores'].append(p)
-                ranks[prop2]['labels'].append(int((prop1, prop2) in self.is_sibling))
+                ranks[prop2]['labels'].append(int((prop1, prop2) in self.is_true))
 
         # compute score
         auc_dict, ap_dict = {}, {}
@@ -151,15 +160,15 @@ class AnalogyEval():
         evaluate the predictions,
         tuple is [property1, property2, probability of being analogous].
         '''
-        return getattr(self, self.reduction + '_' + self.method)(predictions)
+        return getattr(self, self.reduction + '_' + self.metric)(predictions)
 
 
     def eval_by(self,
                 reduction: str,
-                method: str,
+                metric: str,
                 predictions: List[Tuple[str, str, float]]):
         '''
         evaluate the predictions,
         tuple is [property1, property2, probability of being analogous].
         '''
-        return getattr(self, reduction + '_' + method)(predictions)
+        return getattr(self, reduction + '_' + metric)(predictions)

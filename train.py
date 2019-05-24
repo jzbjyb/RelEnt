@@ -127,7 +127,7 @@ if __name__ == '__main__':
 
     # load subgraph and embedding
     subgraph_dict = read_subgraph_file(args.subgraph_file)
-    id2ind, emb = load_embedding(args.emb_file, debug=True, emb_size=200) if args.emb_file else (None, None)
+    id2ind, emb = load_embedding(args.emb_file, debug=False, emb_size=200) if args.emb_file else (None, None)
     '''
     # TODO debug
     class emb_dict_cls():
@@ -141,26 +141,27 @@ if __name__ == '__main__':
                                   subgraph_dict,
                                   id2ind=id2ind,
                                   edge_type='one',
-                                  keep_one_per_prop=False)
+                                  keep_one_per_prop=True,
+                                  neg_ratio=5)
     train_dataloader = DataLoader(train_data, batch_size=128, shuffle=True,
-                                  num_workers=8, collate_fn=train_data.collate_fn)
+                                  num_workers=1, collate_fn=train_data.collate_fn)
     dev_data = PointwiseDataset(os.path.join(args.dataset_dir, 'dev.pointwise'),
                                 subgraph_dict,
                                 id2ind=id2ind,
                                 edge_type='one',
-                                keep_one_per_prop=False)
+                                keep_one_per_prop=True)
     dev_dataloader = DataLoader(dev_data, batch_size=128, shuffle=False,
-                                num_workers=8, collate_fn=dev_data.collate_fn)
+                                num_workers=1, collate_fn=dev_data.collate_fn)
 
     # config model, optimizer and evaluation
-    model = ModelWrapper(emb_size=200, emb=emb, hidden_size=64, method='ggnn')
+    model = ModelWrapper(emb_size=200, emb=emb, hidden_size=64, method='emb')
     model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
     train_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'train.prop')))
-    train_metirc = AnalogyEval(args.subprop_file, method='auc_map',
+    train_metirc = AnalogyEval(args.subprop_file, method='parent', metric='auc_map',
                                reduction='property', prop_set=train_prop_set)
     dev_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'dev.prop')))
-    dev_metric = AnalogyEval(args.subprop_file, method='auc_map',
+    dev_metric = AnalogyEval(args.subprop_file, method='parent', metric='auc_map',
                              reduction='property', prop_set=dev_prop_set, debug=False)
 
     # train and evaluate
@@ -179,6 +180,6 @@ if __name__ == '__main__':
         print('accuracy')
         print(train_metirc.eval_by('property', 'accuracy', train_pred),
               dev_metric.eval_by('property', 'accuracy', dev_pred))
-        print('ranking')
-        print(train_metirc.eval_by('property', 'auc_map', train_pred),
-              dev_metric.eval_by('property', 'auc_map', dev_pred))
+        #print('ranking')
+        #print(train_metirc.eval_by('property', 'auc_map', train_pred),
+        #      dev_metric.eval_by('property', 'auc_map', dev_pred))

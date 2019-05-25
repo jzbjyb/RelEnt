@@ -8,7 +8,7 @@ import numpy as np
 
 def hiro_subgraph_to_tree_dict(root: str,
                                hiro_subg: List[Tuple[List[str], str, int]],
-                               max_hop=1) -> Tuple[str, Dict[str, Tuple[str, Dict]]]:
+                               max_hop=1) -> Tuple[str, Dict[str, List[Tuple[str, Dict]]]]:
     # group all the entities by their depth
     hop_dict: Dict[int, List[Tuple[List[str], str, int]]] = defaultdict(lambda: [])
     for e in hiro_subg:
@@ -16,11 +16,14 @@ def hiro_subgraph_to_tree_dict(root: str,
         hop_dict[depth].append(e)
     # generate subgraph dict from small hop to large hop
     # recursive tree structure that cannot handle cycles
+    # note that a property might point to multiple entities
     # TODO: hiro's graph is acyclic by its nature and might not be complete
     # TODO: hiro's graph is not complete comparing to the wikidata page and some properties are duplicate
-    tree_dict: Tuple[Dict[str, Tuple[str, Dict]]] = (root, {})
+    tree_dict: Tuple[str, Dict[str, List[Tuple[str, Dict]]]] = (root, {})
     for hop in range(max_hop):
         hop += 1
+        if hop > 1:
+            raise NotImplementedError  # TODO: cannot construct the subgraph from hiro's data structure
         for e in hop_dict[hop]:
             plist, tid, _ = e
             trace = tree_dict[1]
@@ -28,18 +31,20 @@ def hiro_subgraph_to_tree_dict(root: str,
             for p in plist[:-1]:
                 parent = trace[p][0]
                 trace = trace[p][1]
-            trace[plist[-1]] = (tid, {})
+            if plist[-1] not in trace:
+                trace[plist[-1]] = []
+            trace[plist[-1]].append((tid, {}))
     return tree_dict
 
 
-def tree_dict_to_adj(tree_dict: Tuple[str, Dict[str, Tuple[str, Dict]]]) -> List[Tuple[str, str, str]]:
+def tree_dict_to_adj(tree_dict: Tuple[str, Dict[str, List[Tuple[str, Dict]]]]) -> List[Tuple[str, str, str]]:
     # DFS to get all the connections used to construct adjacency matrix
     adjs: List[Tuple[str, str, str]] = []
     root = tree_dict[0]
-    for p in tree_dict[1]:
-        sub_tree_dict = tree_dict[1][p]
-        adjs.append((root, p, sub_tree_dict[0]))
-        adjs.extend(tree_dict_to_adj(sub_tree_dict))
+    for p in tree_dict[1]:  # iterative through properites
+        for c in tree_dict[1][p]:  # iterate through entities this property is pointing to
+            adjs.append((root, p, c[0]))
+            adjs.extend(tree_dict_to_adj(c))
     return adjs
 
 

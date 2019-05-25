@@ -157,17 +157,17 @@ if __name__ == '__main__':
     # load data
     train_data = Dataset(get_dataset_filepath('train'), subgraph_dict,
                          id2ind=id2ind, edge_type='one', keep_one_per_prop=keep_one_per_prop,
-                         use_cac=use_cache)
+                         use_cache=use_cache)
     train_dataloader = DataLoader(train_data, batch_size=128, shuffle=True,
                                   num_workers=0, collate_fn=train_data.collate_fn)
     dev_data = Dataset(get_dataset_filepath('dev'), subgraph_dict,
                        id2ind=id2ind, edge_type='one', keep_one_per_prop=keep_one_per_prop,
-                       use_cac=use_cache)
+                       use_cache=use_cache)
     dev_dataloader = DataLoader(dev_data, batch_size=128, shuffle=False,
                                 num_workers=0, collate_fn=dev_data.collate_fn)
     test_data = Dataset(get_dataset_filepath('test'), subgraph_dict,
                         id2ind=id2ind, edge_type='one', keep_one_per_prop=keep_one_per_prop,
-                        use_cac=use_cache)
+                        use_cache=use_cache)
     test_dataloader = DataLoader(test_data, batch_size=128, shuffle=False,
                                  num_workers=0, collate_fn=test_data.collate_fn)
 

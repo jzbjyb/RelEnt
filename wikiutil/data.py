@@ -126,13 +126,16 @@ class PropertyDataset(Dataset):
                  subgraph_dict: Dict[str, List],
                  id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
-                 edge_type: str = 'one'):
+                 edge_type: str = 'one',
+                 use_cache: bool = False):
         self.subgraph_dict = subgraph_dict
         assert edge_type in {'one'}
         # 'one' means only use a single type of edge to link properties and entities
         self.edge_type = edge_type
         self.id2ind = id2ind
         self.padding_ind = padding_ind
+        self.use_cache = use_cache
+        self._cache = {}
 
 
     def pos_neg_filter(self, samples: List[Tuple], neg_ratio: int = 3):
@@ -157,9 +160,13 @@ class PropertyDataset(Dataset):
 
     #@lru_cache(maxsize=10000)  # result in out-of-memory error
     def create_subgraph(self, property_occ: Tuple[str, Tuple[Tuple[str, str]]]) -> PropertySubgraph:
+        if self.use_cache and property_occ in self._cache:
+            return self._cache[property_occ]
         pid, occs = property_occ
         sg = PropertySubgraph(
             pid, occs, self.subgraph_dict, self.id2ind, self.padding_ind, self.edge_type)
+        if self.use_cache:
+            self._cache[property_occ] = sg
         return sg
 
 
@@ -170,11 +177,12 @@ class PointwiseDataset(PropertyDataset):
                  id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
                  edge_type: str = 'one',
+                 use_cache: bool = False,
                  filter_prop: set = None,
                  keep_one_per_prop: bool = False,
                  neg_ratio: int = None,
                  manager: Manager = None):
-        super(PointwiseDataset, self).__init__(subgraph_dict, id2ind, padding_ind, edge_type)
+        super(PointwiseDataset, self).__init__(subgraph_dict, id2ind, padding_ind, edge_type, use_cache)
         print('load data from {} ...'.format(filepath))
         self.inst_list = read_multi_pointiwse_file(
             filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
@@ -228,9 +236,10 @@ class NwayDataset(PropertyDataset):
                  id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
                  edge_type: str = 'one',
+                 use_cache: bool = False,
                  filter_prop: set = None,
                  keep_one_per_prop: bool = False):
-        super(NwayDataset, self).__init__(subgraph_dict, id2ind, padding_ind, edge_type)
+        super(NwayDataset, self).__init__(subgraph_dict, id2ind, padding_ind, edge_type, use_cache)
         print('load data from {} ...'.format(filepath))
         self.inst_list = read_nway_file(
             filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)

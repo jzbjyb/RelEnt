@@ -188,3 +188,12 @@ class AnalogyEval():
         tuple is [property1, property2, probability of being analogous].
         '''
         return getattr(self, reduction + '_' + metric)(predictions)
+
+
+def accuray(predictions: List[Tuple[str, List, int]]):
+    corr, total = 0, 0
+    for pid, logits, label in predictions:
+        total += 1
+        if np.argmax(logits) == label:
+            corr += 1
+    return corr / total

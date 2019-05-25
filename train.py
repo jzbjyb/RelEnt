@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from multiprocessing import Manager
 from wikiutil.data import PointwiseDataset, NwayDataset
 from wikiutil.util import load_embedding, filer_embedding
-from wikiutil.metric import AnalogyEval
+from wikiutil.metric import AnalogyEval, accuray
 from wikiutil.property import read_prop_file, read_subgraph_file
 from analogy.ggnn import GatedGraphNeuralNetwork
 
@@ -77,7 +77,7 @@ class Model(nn.Module):
         return logits, loss
 
 
-def one_epoch(split, dataloader, optimizer, device, show_progress=True):
+def one_epoch(args, split, dataloader, optimizer, device, show_progress=True):
     loss_li, pred_li = [], []
     if split == 'train':
         model.train()
@@ -97,12 +97,13 @@ def one_epoch(split, dataloader, optimizer, device, show_progress=True):
             optimizer.step()
 
         loss_li.append(loss.item())
-        # TODO: add classifier
-        '''
-        pred_li.extend([(pid1, pid2, logits[i].item())
-                        for i, (pid1, pid2) in
-                        enumerate(zip(batch[0]['meta']['pid1'], batch[0]['meta']['pid2']))])
-        '''
+        if args.dataset_format == 'pointwise':
+            pred_li.extend([(pid1, pid2, logits[i].item())
+                            for i, (pid1, pid2) in
+                            enumerate(zip(batch[0]['meta']['pid1'], batch[0]['meta']['pid2']))])
+        else:
+            pred_li.extend([(pid, logits[i].detach().cpu().numpy(), label[i].item())
+                            for i, pid in enumerate(batch[0]['meta']['pid'])])
 
     return pred_li, loss_li
 
@@ -117,6 +118,7 @@ if __name__ == '__main__':
     parser.add_argument('--emb_file', type=str, default=None, help='embedding file')
     parser.add_argument('--no_cuda', action='store_true')
     parser.add_argument('--filter_emb', action='store_true')
+    parser.add_argument('--patience', type=int, default=0, help='number of epoch before running out of patience')
     args = parser.parse_args()
 
     random.seed(2019)
@@ -152,13 +154,17 @@ if __name__ == '__main__':
 
     # load data
     train_data = Dataset(get_dataset_filepath('train'), subgraph_dict,
-                         id2ind=id2ind, edge_type='one', keep_one_per_prop=False)
+                         id2ind=id2ind, edge_type='one', keep_one_per_prop=True)
     train_dataloader = DataLoader(train_data, batch_size=128, shuffle=True,
                                   num_workers=1, collate_fn=train_data.collate_fn)
     dev_data = Dataset(get_dataset_filepath('dev'), subgraph_dict,
-                       id2ind=id2ind, edge_type='one', keep_one_per_prop=False)
+                       id2ind=id2ind, edge_type='one', keep_one_per_prop=True)
     dev_dataloader = DataLoader(dev_data, batch_size=128, shuffle=False,
                                 num_workers=1, collate_fn=dev_data.collate_fn)
+    test_data = Dataset(get_dataset_filepath('test'), subgraph_dict,
+                       id2ind=id2ind, edge_type='one', keep_one_per_prop=True)
+    test_dataloader = DataLoader(test_data, batch_size=128, shuffle=False,
+                                 num_workers=1, collate_fn=test_data.collate_fn)
 
     # config model, optimizer and evaluation
     model = Model(num_class=num_class_dict[args.dataset_format],
@@ -168,30 +174,41 @@ if __name__ == '__main__':
                   method='emb')
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    '''
     train_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'train.prop')))
     train_metirc = AnalogyEval(args.subprop_file, method='parent', metric='auc_map',
                                reduction='property', prop_set=train_prop_set)
     dev_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'dev.prop')))
     dev_metric = AnalogyEval(args.subprop_file, method='parent', metric='auc_map',
                              reduction='property', prop_set=dev_prop_set, debug=False)
+    '''
 
-    # train and evaluate
-    show_progress = True
-    for epoch in range(100):
-
-        print('epoch {}'.format(epoch + 1))
+    # train and test
+    show_progress = False
+    pat, best_dev_metric = 0, 0
+    for epoch in range(300):
+        # init performance
         if epoch == 0:
-            dev_pred, dev_loss = one_epoch('dev', dev_dataloader, optimizer,
+            dev_pred, dev_loss = one_epoch(args, 'dev', dev_dataloader, optimizer,
                                            device=device, show_progress=show_progress)
             print('init')
-            print(np.mean(dev_loss), dev_metric.eval(dev_pred))
+            #print(np.mean(dev_loss), dev_metric.eval(dev_pred))
+            print(np.mean(dev_loss), accuray(dev_pred))
 
-        train_pred, train_loss = one_epoch('train', train_dataloader, optimizer,
+        # train, dev, test
+        train_pred, train_loss = one_epoch(args, 'train', train_dataloader, optimizer,
                                            device=device, show_progress=show_progress)
-        dev_pred, dev_loss = one_epoch('dev', dev_dataloader, optimizer,
+        dev_pred, dev_loss = one_epoch(args, 'dev', dev_dataloader, optimizer,
                                        device=device, show_progress=show_progress)
+        test_pred, test_loss = one_epoch(args, 'test', test_dataloader, optimizer,
+                                         device=device, show_progress=show_progress)
 
-        print('tr_loss: {:>.3f}\tdev_loss: {:>.3f}'.format(np.mean(train_loss), np.mean(dev_loss)))
+        # evaluate
+        train_metric, dev_metric, test_metric = accuray(train_pred), accuray(dev_pred), accuray(test_pred)
+        print('epoch {:4d}\ttr_loss: {:>.3f}\tdev_loss: {:>.3f}\tte_loss: {:>.3f}'.format(
+            epoch + 1, np.mean(train_loss), np.mean(dev_loss), np.mean(test_loss)), end='')
+        print('\t\ttr_acc: {:>.3f}\tdev_acc: {:>.3f}\ttest_acc: {:>.3f}'.format(
+            train_metric, dev_metric, test_metric))
         '''
         print('accuracy')
         print(train_metirc.eval_by('property', 'accuracy', train_pred),
@@ -200,3 +217,14 @@ if __name__ == '__main__':
         print(train_metirc.eval_by('property', 'correct_position', train_pred),
               dev_metric.eval_by('property', 'correct_position', dev_pred))
         '''
+
+        # early stop
+        if args.patience:
+            if dev_metric < best_dev_metric:
+                pat += 1
+                if pat >= args.patience:
+                    print('run out of patience')
+                    break
+            else:
+                pat = 0
+                best_dev_metric = dev_metric

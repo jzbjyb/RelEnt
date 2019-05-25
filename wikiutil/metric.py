@@ -190,10 +190,17 @@ class AnalogyEval():
         return getattr(self, reduction + '_' + metric)(predictions)
 
 
-def accuray(predictions: List[Tuple[str, List, int]]):
+def accuray(predictions: List[Tuple[str, List, int]], method='macro'):
+    assert method in {'macro', 'micro'}
+    pid2acc = defaultdict(lambda: [])
     corr, total = 0, 0
     for pid, logits, label in predictions:
+        c = int(np.argmax(logits) == label)
+        pid2acc[pid].append(c)
         total += 1
-        if np.argmax(logits) == label:
-            corr += 1
-    return corr / total
+        corr += c
+    if method == 'macro':
+        acc = np.mean([np.mean(v) for k, v in pid2acc.items()])
+    elif method == 'micro':
+        acc = corr / total
+    return acc

@@ -133,6 +133,7 @@ if __name__ == '__main__':
     # get dataset class and configs
     keep_one_per_prop = False
     use_cache = True
+    num_worker = 0
     num_class_dict = {'nway': 16, 'pointwise': 1}
     num_graph_dict = {'nway': 1, 'pointwise': 2}
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
@@ -159,17 +160,17 @@ if __name__ == '__main__':
                          id2ind=id2ind, edge_type='one', keep_one_per_prop=keep_one_per_prop,
                          use_cache=use_cache)
     train_dataloader = DataLoader(train_data, batch_size=128, shuffle=True,
-                                  num_workers=0, collate_fn=train_data.collate_fn)
+                                  num_workers=num_worker, collate_fn=train_data.collate_fn)
     dev_data = Dataset(get_dataset_filepath('dev'), subgraph_dict,
                        id2ind=id2ind, edge_type='one', keep_one_per_prop=keep_one_per_prop,
                        use_cache=use_cache)
     dev_dataloader = DataLoader(dev_data, batch_size=128, shuffle=False,
-                                num_workers=0, collate_fn=dev_data.collate_fn)
+                                num_workers=num_worker, collate_fn=dev_data.collate_fn)
     test_data = Dataset(get_dataset_filepath('test'), subgraph_dict,
                         id2ind=id2ind, edge_type='one', keep_one_per_prop=keep_one_per_prop,
                         use_cache=use_cache)
     test_dataloader = DataLoader(test_data, batch_size=128, shuffle=False,
-                                 num_workers=0, collate_fn=test_data.collate_fn)
+                                 num_workers=num_worker, collate_fn=test_data.collate_fn)
 
     # config model, optimizer and evaluation
     model = Model(num_class=num_class_dict[args.dataset_format],
@@ -178,7 +179,7 @@ if __name__ == '__main__':
                   hidden_size=64,
                   method='ggnn')
     model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)  # 1e-2 for emb and 1e-3 for ggnn
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)  # 1e-3 for emb and 1e-4 for ggnn
     '''
     train_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'train.prop')))
     train_metirc = AnalogyEval(args.subprop_file, method='parent', metric='auc_map',

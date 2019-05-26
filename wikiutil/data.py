@@ -10,6 +10,7 @@ import torch
 from torch.utils.data import Dataset
 from .property import read_multi_pointiwse_file, read_nway_file
 from .util import DefaultOrderedDict
+from .constant import AGG_NODE, AGG_PROP
 
 
 class DataPrepError(Exception):
@@ -24,7 +25,8 @@ class PropertySubgraph():
                  id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,  # TODO: add padding index
                  edge_type: str = 'one',
-                 use_pseudo_property: bool = False):
+                 use_pseudo_property: bool = False,
+                 agg_property: str = AGG_PROP):
         self.pid = property_id
         self.occurrences = occurrences
         self.subgraph_dict = subgraph_dict
@@ -35,6 +37,7 @@ class PropertySubgraph():
         # 'relation': properties are treated as edges
         self.edge_type = edge_type
         self.use_pseudo_property = use_pseudo_property
+        self.agg_property = agg_property  # a special property used to aggregate information
         self.id2ind, self.ind2adjs, self.emb_ind, self.prop_ind = self._to_gnn_input()
         self.ids = set([k.split('-')[0] for k in self.id2ind])  # all the ids of entities and properties involved
 
@@ -117,9 +120,14 @@ class PropertySubgraph():
             id2ind = DefaultOrderedDict(lambda: len(id2ind))  # entity id to index mapping
 
             pid2adjs = DefaultOrderedDict(lambda: [])
+            _ = id2ind[AGG_NODE]  # make sure the agg node is the first one
             for i, (hid, tid) in enumerate(self.occurrences):
-                adjs = pid2adjs[self.pid]
                 # TODO: use which node to gather propagated information?
+                agg_adjs = pid2adjs[self.agg_property]
+                agg_adjs.append((id2ind[hid], id2ind[AGG_NODE]))
+                agg_adjs.append((id2ind[tid], id2ind[AGG_NODE]))
+
+                adjs = pid2adjs[self.pid]
                 adjs.append((id2ind[hid], id2ind[tid]))
                 try:
                     for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:

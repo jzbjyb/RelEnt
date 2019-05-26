@@ -14,6 +14,7 @@ from wikiutil.data import PointwiseDataset, NwayDataset
 from wikiutil.util import load_embedding, filer_embedding, load_tsv_as_dict
 from wikiutil.metric import AnalogyEval, accuray
 from wikiutil.property import read_prop_file, read_subgraph_file
+from wikiutil.constant import AGG_NODE, AGG_PROP
 from analogy.ggnn import GatedGraphNeuralNetwork
 
 
@@ -36,7 +37,7 @@ class Model(nn.Module):
         # get embedding
         if emb is not None:  # init from pre-trained
             vocab_size, emb_size = emb.shape
-            self.emb = nn.Embedding.from_pretrained(torch.tensor(emb), freeze=True)
+            self.emb = nn.Embedding.from_pretrained(torch.tensor(emb).float(), freeze=True)
         else:  # random init
             self.emb = nn.Embedding(vocab_size, emb_size, padding_idx=padding_ind)
 
@@ -172,6 +173,11 @@ if __name__ == '__main__':
     id2ind, emb = load_embedding(args.emb_file, debug=debug, emb_size=200) if args.emb_file else (None, None)
     #properties_as_relations = {'P31', 'P21', 'P527', 'P17'}  # for debug
     properties_as_relations = load_tsv_as_dict(os.path.join(args.dataset_dir, 'pid2ind.tsv'), valuefunc=int)
+    # add agg property and node
+    properties_as_relations[AGG_PROP] = len(properties_as_relations)
+    id2ind[AGG_NODE] = len(id2ind)
+    emb = np.concatenate([emb, np.zeros((1, emb.shape[1]), dtype=np.float32)], axis=0)
+    # set num_edge_types
     num_edge_types = 1 if edge_type == 'one' else len(properties_as_relations)
 
     # load data

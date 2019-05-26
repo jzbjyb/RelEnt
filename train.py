@@ -4,13 +4,14 @@
 from typing import List, Tuple, Dict
 import argparse, random, os, time
 from tqdm import tqdm
+from collections import defaultdict
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from multiprocessing import Manager
 from wikiutil.data import PointwiseDataset, NwayDataset
-from wikiutil.util import load_embedding, filer_embedding
+from wikiutil.util import load_embedding, filer_embedding, load_tsv_as_dict
 from wikiutil.metric import AnalogyEval, accuray
 from wikiutil.property import read_prop_file, read_subgraph_file
 from analogy.ggnn import GatedGraphNeuralNetwork
@@ -25,7 +26,8 @@ class Model(nn.Module):
                  padding_ind: int = 0,  # TODO: add padding index
                  emb: np.ndarray = None,
                  hidden_size: int = 64,
-                 method: str = 'ggnn'):
+                 method: str = 'ggnn',
+                 num_edge_types: int = 1):
         super(Model, self).__init__()
         assert method in {'ggnn', 'emb'}
         self.method = method
@@ -40,7 +42,7 @@ class Model(nn.Module):
 
         # get model
         self.emb_proj = nn.Linear(emb_size, hidden_size)
-        self.gnn = GatedGraphNeuralNetwork(hidden_size=hidden_size, num_edge_types=1,
+        self.gnn = GatedGraphNeuralNetwork(hidden_size=hidden_size, num_edge_types=num_edge_types,
                                            layer_timesteps=[3, 3], residual_connections={})
         self.cla = nn.Sequential(
             nn.Dropout(p=0.2),
@@ -58,7 +60,7 @@ class Model(nn.Module):
             ge = self.emb_proj(self.emb(data['emb_ind'][i]))
             if self.method == 'ggnn':
                 gnn = self.gnn.compute_node_representations(
-                    initial_node_representation=ge, adjacency_lists=[data['adj'][i]])
+                    initial_node_representation=ge, adjacency_lists=data['adj'][i])
                 # TODO: combine ggnn and emb
                 #ge = 0.5 * ge + 0.5 * gnn
                 ge = gnn
@@ -90,7 +92,7 @@ def one_epoch(args, split, dataloader, optimizer, device, show_progress=True):
         iter = tqdm(dataloader, disable=not show_progress)
     for batch in iter:
         batch_dict, label = batch
-        batch_dict = dict((k, [t.to(device) for t in batch_dict[k]]) for k in batch_dict if k != 'meta')
+        batch_dict = dataloader.dataset.to(batch_dict, device)
         label = label.to(device)
         logits, loss = model(batch_dict, label)
 
@@ -134,9 +136,11 @@ if __name__ == '__main__':
         device = torch.device('cuda')
 
     # get dataset class and configs
+    debug = False
     keep_one_per_prop = False
     use_cache = True
     use_pseudo_property = True
+    edge_type = 'property'
     num_workers = 0
     num_class_dict = {'nway': 16, 'pointwise': 1}
     num_graph_dict = {'nway': 1, 'pointwise': 2}
@@ -146,24 +150,36 @@ if __name__ == '__main__':
     # load subgraph
     subgraph_dict = read_subgraph_file(args.subgraph_file)
 
-    # filter emb by dry run datasets
+    # filter emb and get all the properties used by dry run datasets
     if args.filter_emb:
-        all_ids = set()
+        all_ids = defaultdict(lambda: 0)
         for split in ['train', 'dev', 'test']:
             ds = Dataset(get_dataset_filepath(split), subgraph_dict, edge_type='one')
-            all_ids.update(ds.collect_ids())
+            for k, v in ds.collect_ids().items():
+                all_ids[k] += v
+
         print('#ids {}'.format(len(all_ids)))
-        filer_embedding(args.emb_file, 'data/test.emb', all_ids)
+        all_properties = [(k, v) for k, v in all_ids.items() if k.startswith('P')]
+        print('#properties {}'.format(len(all_properties)))
+
+        with open(os.path.join(args.dataset_dir, 'pid2ind.tsv'), 'w') as fout:
+            for i, (pid, count) in enumerate(sorted(all_properties, key=lambda x: -x[1])):
+                fout.write('{}\t{}\t{}\n'.format(pid, i, count))
+        filer_embedding(args.emb_file, 'data/test.emb', set(all_ids.keys()))
         exit(1)
 
     # load embedding
-    id2ind, emb = load_embedding(args.emb_file, debug=False, emb_size=200) if args.emb_file else (None, None)
+    id2ind, emb = load_embedding(args.emb_file, debug=debug, emb_size=200) if args.emb_file else (None, None)
+    #properties_as_relations = {'P31', 'P21', 'P527', 'P17'}  # for debug
+    properties_as_relations = load_tsv_as_dict(os.path.join(args.dataset_dir, 'pid2ind.tsv'), valuefunc=int)
+    num_edge_types = 1 if edge_type == 'one' else len(properties_as_relations)
 
     # load data
     dataset_params = {
         'subgraph_dict': subgraph_dict,
+        'properties_as_relations': properties_as_relations,
         'id2ind': id2ind,
-        'edge_type': 'one',
+        'edge_type': edge_type,
         'keep_one_per_prop': keep_one_per_prop,
         'use_cache': use_cache,
         'use_pseudo_property': use_pseudo_property
@@ -184,7 +200,8 @@ if __name__ == '__main__':
                   num_graph=num_graph_dict[args.dataset_format],
                   emb=emb,
                   hidden_size=64,
-                  method='ggnn')
+                  method='ggnn',
+                  num_edge_types=num_edge_types)
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)  # 1e-3 for emb and 1e-4 for ggnn
     '''

@@ -6,6 +6,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def load_tsv_as_dict(filepath, keyfunc=lambda x:x, valuefunc=lambda x:x):
+    result = {}
+    with open(filepath, 'r') as fin:
+        for l in fin:
+            l = l.strip().split('\t')
+            result[keyfunc(l[0])] = valuefunc(l[1])
+    return result
+
+
 def file_filter_by_key(cache_dir):
     def wrapper(func):
         @functools.wraps(func)

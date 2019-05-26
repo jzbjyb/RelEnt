@@ -1,6 +1,7 @@
 from typing import Tuple, List, Any, Dict
 from random import shuffle
 from tqdm import tqdm
+from collections import OrderedDict, defaultdict
 from functools import lru_cache
 import numpy as np
 import multiprocessing
@@ -29,10 +30,13 @@ class PropertySubgraph():
         self.subgraph_dict = subgraph_dict
         self.id2ind = id2ind
         self.padding_ind = padding_ind
-        assert edge_type in {'one'}
+        assert edge_type in {'one', 'property'}
+        # 'one': properties are treated as nodes and only use a single type of edges
+        # 'relation': properties are treated as edges
         self.edge_type = edge_type
         self.use_pseudo_property = use_pseudo_property
-        self.id2ind, self.adjs, self.emb_ind, self.prop_ind = self._to_gnn_input()
+        self.id2ind, self.ind2adjs, self.emb_ind, self.prop_ind = self._to_gnn_input()
+        self.ids = set([k.split('-')[0] for k in self.id2ind])  # all the ids of entities and properties involved
 
 
     @property
@@ -106,26 +110,63 @@ class PropertySubgraph():
                 # when id2ind does not exist, use padding_ind
                 emb_ind = np.array([self.padding_ind] * len(id2ind))
 
-            return id2ind, adjs, emb_ind, [0]
+            return id2ind, {'one': adjs}, emb_ind, [0]
+
+        elif self.edge_type == 'property':
+            # build adj list
+            id2ind = DefaultOrderedDict(lambda: len(id2ind))  # entity id to index mapping
+
+            pid2adjs = DefaultOrderedDict(lambda: [])
+            for i, (hid, tid) in enumerate(self.occurrences):
+                adjs = pid2adjs[self.pid]
+                # TODO: use which node to gather propagated information?
+                adjs.append((id2ind[hid], id2ind[tid]))
+                try:
+                    for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
+                        for e1, pid, e2 in two_side:
+                            adjs = pid2adjs[pid]
+                            adjs.append((id2ind[e1], id2ind[e2]))
+                except KeyError:
+                    raise DataPrepError
+
+            # remove duplicate item in adjs
+            for pid in pid2adjs:
+                pid2adjs[pid] = list(set(pid2adjs[pid]))
+
+            # build emb index
+            if self.id2ind:
+                try:
+                    emb_ind = np.array([self.id2ind[k] for k in id2ind])
+                except KeyError:
+                    raise DataPrepError
+            else:
+                emb_ind = np.array([self.padding_ind] * len(id2ind))
+
+            return id2ind, pid2adjs, emb_ind, [0]
 
 
     @staticmethod
-    def pack_graphs(graphs: List):
+    def pack_graphs(graphs: List, pid2ind: OrderedDict):
         ''' convert to gnn input format (adjacency list, input emb, and prop index) '''
         if len(graphs) == 0:
             raise Exception
         edge_type = graphs[0].edge_type
+        new_ind2adjs, new_emb_ind, new_prop_ind = DefaultOrderedDict(lambda: []), [], []
+        acc = 0
+        for g in graphs:
+            for ind, adjs in g.ind2adjs.items():
+                new_ind2adjs[ind].extend([(adj[0] + acc, adj[1] + acc) for adj in adjs])
+            new_emb_ind.append(g.emb_ind)
+            new_prop_ind.append(acc)
+            acc += g.size
         if edge_type == 'one':
-            new_adjs, new_emb_ind, new_prop_ind = [], [], []
-            acc = 0
-            for g in graphs:
-                for adj in g.adjs:
-                    new_adjs.append((adj[0] + acc, adj[1] + acc))
-                new_emb_ind.append(g.emb_ind)
-                new_prop_ind.append(acc)
-                acc += g.size
-            new_emb = np.concatenate(new_emb_ind, axis=0)
-            return new_adjs, new_emb, new_prop_ind
+            adjs_li = [new_ind2adjs[pid] for pid in new_ind2adjs]
+        elif edge_type == 'property':
+            adjs_li = [new_ind2adjs[pid] for pid in pid2ind]  # use OrderedDict to get a list of adjs
+        else:
+            raise NotImplementedError
+        new_emb = np.concatenate(new_emb_ind, axis=0)
+        return adjs_li, new_emb, new_prop_ind
 
 
 class AdjacencyList:
@@ -153,14 +194,15 @@ class AdjacencyList:
 class PropertyDataset(Dataset):
     def __init__(self,
                  subgraph_dict: Dict[str, List],
+                 properties_as_relations: set = None,  # the property set used as relations
                  id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
                  edge_type: str = 'one',
                  use_cache: bool = False,
                  use_pseudo_property: bool = False):
         self.subgraph_dict = subgraph_dict
-        assert edge_type in {'one'}
-        # 'one' means only use a single type of edge to link properties and entities
+        if properties_as_relations:
+            self.pid2ind = OrderedDict((pid, i) for i, pid in enumerate(properties_as_relations))
         self.edge_type = edge_type
         self.id2ind = id2ind
         self.padding_ind = padding_ind
@@ -181,11 +223,12 @@ class PropertyDataset(Dataset):
         raise NotImplementedError
 
 
-    def collect_ids(self) -> set:
+    def collect_ids(self) -> Dict[str, int]:
         print('collecting ids ...')
-        ids = set()
+        ids = defaultdict(lambda: 0)
         for i in tqdm(range(self.__len__())):
-            ids.update(self.getids(self.__getitem__(i)))
+            for id in self.getids(self.__getitem__(i)):
+                ids[id] += 1
         return ids
 
 
@@ -202,10 +245,20 @@ class PropertyDataset(Dataset):
         return sg
 
 
+    def to(self, batch_dict: Dict[str, List], device: torch.device):
+        ''' values in batch_dict might be nested lists '''
+        def nested_to(li: List):
+            if hasattr(li, 'to'):
+                return li.to(device)
+            return [nested_to(item) for item in li]
+        return dict((k, nested_to(v)) for k, v in batch_dict.items() if k != 'meta')
+
+
 class PointwiseDataset(PropertyDataset):
     def __init__(self,
                  filepath: str,
                  subgraph_dict: Dict[str, List],
+                 properties_as_relations: set = None,  # the property set used as relations
                  id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
                  edge_type: str = 'one',
@@ -216,7 +269,7 @@ class PointwiseDataset(PropertyDataset):
                  manager: Manager = None,
                  use_pseudo_property: bool = False):
         super(PointwiseDataset, self).__init__(
-            subgraph_dict, id2ind, padding_ind, edge_type, use_cache, use_pseudo_property)
+            subgraph_dict, properties_as_relations, id2ind, padding_ind, edge_type, use_cache, use_pseudo_property)
         print('load data from {} ...'.format(filepath))
         self.inst_list = read_multi_pointiwse_file(
             filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
@@ -242,7 +295,7 @@ class PointwiseDataset(PropertyDataset):
 
     def getids(self, getitem_result):
         g1, g2, _ = getitem_result
-        return set(g1.id2ind.keys()) | set(g2.id2ind.keys())
+        return g1.ids | g2.ids
 
 
     def collate_fn(self, insts: List):
@@ -251,11 +304,11 @@ class PointwiseDataset(PropertyDataset):
         pid2s = [sg.pid for sg in packed_sg2]
         adjs12, emb_ind12, prop_ind12 = [], [], []
         for packed_sg in [packed_sg1, packed_sg2]:
-            adjs, emb_ind, prop_ind = PropertySubgraph.pack_graphs(packed_sg)
-            adjs = AdjacencyList(node_num=len(adjs), adj_list=adjs)
+            adjs_li, emb_ind, prop_ind = PropertySubgraph.pack_graphs(packed_sg, self.pid2ind)
+            adjs_li = [AdjacencyList(node_num=len(adjs), adj_list=adjs) for adjs in adjs_li]
             emb_ind = torch.LongTensor(emb_ind)
             prop_ind = torch.LongTensor(prop_ind)
-            adjs12.append(adjs)
+            adjs12.append(adjs_li)
             emb_ind12.append(emb_ind)
             prop_ind12.append(prop_ind)
         return {'adj': adjs12, 'emb_ind': emb_ind12, 'prop_ind': prop_ind12,
@@ -267,6 +320,7 @@ class NwayDataset(PropertyDataset):
     def __init__(self,
                  filepath: str,
                  subgraph_dict: Dict[str, List],
+                 properties_as_relations: set = None,  # the property set used as relations
                  id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
                  edge_type: str = 'one',
@@ -275,7 +329,7 @@ class NwayDataset(PropertyDataset):
                  keep_one_per_prop: bool = False,
                  use_pseudo_property: bool = False):
         super(NwayDataset, self).__init__(
-            subgraph_dict, id2ind, padding_ind, edge_type, use_cache, use_pseudo_property)
+            subgraph_dict, properties_as_relations, id2ind, padding_ind, edge_type, use_cache, use_pseudo_property)
         print('load data from {} ...'.format(filepath))
         self.inst_list = read_nway_file(
             filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
@@ -294,16 +348,16 @@ class NwayDataset(PropertyDataset):
 
     def getids(self, getitem_result):
         g, _ = getitem_result
-        return set(g.id2ind.keys())
+        return g.ids
 
 
     def collate_fn(self, insts: List):
         packed_sg, labels = zip(*insts)
         pids = [sg.pid for sg in packed_sg]
-        adjs, emb_ind, prop_ind = PropertySubgraph.pack_graphs(packed_sg)
-        adjs = AdjacencyList(node_num=len(adjs), adj_list=adjs)
+        adjs_li, emb_ind, prop_ind = PropertySubgraph.pack_graphs(packed_sg, self.pid2ind)
+        adjs_li = [AdjacencyList(node_num=len(adjs), adj_list=adjs) for adjs in adjs_li]
         emb_ind = torch.LongTensor(emb_ind)
         prop_ind = torch.LongTensor(prop_ind)
-        return {'adj': [adjs], 'emb_ind': [emb_ind], 'prop_ind': [prop_ind],
+        return {'adj': [adjs_li], 'emb_ind': [emb_ind], 'prop_ind': [prop_ind],
                 'meta': {'pid': pids}}, \
                torch.LongTensor(labels)

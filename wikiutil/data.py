@@ -22,7 +22,8 @@ class PropertySubgraph():
                  subgraph_dict: Dict[str, List[Tuple[str, str, str]]],
                  id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,  # TODO: add padding index
-                 edge_type: str = 'one'):
+                 edge_type: str = 'one',
+                 use_pseudo_property: bool = False):
         self.pid = property_id
         self.occurrences = occurrences
         self.subgraph_dict = subgraph_dict
@@ -30,6 +31,7 @@ class PropertySubgraph():
         self.padding_ind = padding_ind
         assert edge_type in {'one'}
         self.edge_type = edge_type
+        self.use_pseudo_property = use_pseudo_property
         self.id2ind, self.adjs, self.emb_ind, self.prop_ind = self._to_gnn_input()
 
 
@@ -38,12 +40,29 @@ class PropertySubgraph():
         return len(self.id2ind)
 
 
+    def get_pseudo_property_id(self, pid: str, head_id: str, tail_id: str, pid2count: Dict[str, int]):
+        '''
+        The minimal number of pseudo properties for each property is the minimum of the following four:
+        1. the number of unique head entities.
+        2. the number of unique tail entities.
+        3. the number of unique head entities with different tail node set (<= 1).
+        4. the number of unique tail entities with different head node set (<= 2).
+        '''
+        uniq_pid = pid + '-' + head_id
+        #if uniq_pid not in pid2count:
+        #    pid2count[uniq_pid] = 0
+        #pid2count[uniq_pid] += 1
+        #uniq_pid = '{}-{}'.format(pid, pid2count[uniq_pid])
+        return uniq_pid
+
+
     def _to_gnn_input(self):
         ''' convert to gnn input format (adjacency list, input emb index, and prop index) '''
 
         if self.edge_type == 'one':
             # build adj list
             id2ind = DefaultOrderedDict(lambda: len(id2ind))  # entity/proerty id to index mapping
+            pid2count = {}  # used to generate a pseudo property id for each occurrence of a property
             _ = id2ind[self.pid]  # make sure that the central property is alway indexed as 0
             adjs = []
             for i, (hid, tid) in enumerate(self.occurrences):
@@ -52,20 +71,30 @@ class PropertySubgraph():
                 #  the connection between pseudo property and real property?
                 # TODO: (2) treat property as a node is problematic because the same property might
                 #  appear multiple times in the subgraph
-                ppid = self.pid + '-' + str(i)
-                adjs.append((id2ind[ppid], id2ind[self.pid]))  # link pseudo property to real property
+                # TODO: (3) it might be better to treat the links from property to entity and
+                #  the links from entity to property differently
+                if self.use_pseudo_property:  # use a pseudo prop and link it to the real one
+                    ppid = self.get_pseudo_property_id(self.pid, hid, tid, pid2count)
+                    adjs.append((id2ind[ppid], id2ind[self.pid]))
+                else:
+                    ppid = self.pid
                 adjs.append((id2ind[hid], id2ind[ppid]))
                 adjs.append((id2ind[ppid], id2ind[tid]))
                 try:
                     for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
-                        for e1, p, e2 in two_side:
-                            e1 = id2ind[e1]
-                            p = id2ind[p]
-                            e2 = id2ind[e2]
-                            adjs.append((e1, p))
-                            adjs.append((p, e2))
+                        for e1, pid, e2 in two_side:
+                            if self.use_pseudo_property:  # use a pseudo prop and link it to the real one
+                                ppid = self.get_pseudo_property_id(pid, e1, e2, pid2count)
+                                adjs.append((id2ind[ppid], id2ind[pid]))
+                            else:
+                                ppid = pid
+                            adjs.append((id2ind[e1], id2ind[ppid]))
+                            adjs.append((id2ind[ppid], id2ind[e2]))
                 except KeyError:
                     raise DataPrepError
+
+            # remove duplicate item in adjs
+            adjs = list(set(adjs))
 
             # build emb index
             if self.id2ind:
@@ -127,7 +156,8 @@ class PropertyDataset(Dataset):
                  id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
                  edge_type: str = 'one',
-                 use_cache: bool = False):
+                 use_cache: bool = False,
+                 use_pseudo_property: bool = False):
         self.subgraph_dict = subgraph_dict
         assert edge_type in {'one'}
         # 'one' means only use a single type of edge to link properties and entities
@@ -135,6 +165,7 @@ class PropertyDataset(Dataset):
         self.id2ind = id2ind
         self.padding_ind = padding_ind
         self.use_cache = use_cache
+        self.use_pseudo_property = use_pseudo_property
         self._cache = {}
 
 
@@ -164,7 +195,8 @@ class PropertyDataset(Dataset):
             return self._cache[property_occ]
         pid, occs = property_occ
         sg = PropertySubgraph(
-            pid, occs, self.subgraph_dict, self.id2ind, self.padding_ind, self.edge_type)
+            pid, occs, self.subgraph_dict, self.id2ind,
+            self.padding_ind, self.edge_type, self.use_pseudo_property)
         if self.use_cache:
             self._cache[property_occ] = sg
         return sg
@@ -181,8 +213,10 @@ class PointwiseDataset(PropertyDataset):
                  filter_prop: set = None,
                  keep_one_per_prop: bool = False,
                  neg_ratio: int = None,
-                 manager: Manager = None):
-        super(PointwiseDataset, self).__init__(subgraph_dict, id2ind, padding_ind, edge_type, use_cache)
+                 manager: Manager = None,
+                 use_pseudo_property: bool = False):
+        super(PointwiseDataset, self).__init__(
+            subgraph_dict, id2ind, padding_ind, edge_type, use_cache, use_pseudo_property)
         print('load data from {} ...'.format(filepath))
         self.inst_list = read_multi_pointiwse_file(
             filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
@@ -238,8 +272,10 @@ class NwayDataset(PropertyDataset):
                  edge_type: str = 'one',
                  use_cache: bool = False,
                  filter_prop: set = None,
-                 keep_one_per_prop: bool = False):
-        super(NwayDataset, self).__init__(subgraph_dict, id2ind, padding_ind, edge_type, use_cache)
+                 keep_one_per_prop: bool = False,
+                 use_pseudo_property: bool = False):
+        super(NwayDataset, self).__init__(
+            subgraph_dict, id2ind, padding_ind, edge_type, use_cache, use_pseudo_property)
         print('load data from {} ...'.format(filepath))
         self.inst_list = read_nway_file(
             filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)

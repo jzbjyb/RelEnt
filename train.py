@@ -57,8 +57,11 @@ class Model(nn.Module):
             # get representation
             ge = self.emb_proj(self.emb(data['emb_ind'][i]))
             if self.method == 'ggnn':
-                ge = self.gnn.compute_node_representations(
+                gnn = self.gnn.compute_node_representations(
                     initial_node_representation=ge, adjacency_lists=[data['adj'][i]])
+                # TODO: combine ggnn and emb
+                #ge = 0.5 * ge + 0.5 * gnn
+                ge = gnn
             # select
             # SHAPE: (batch_size, emb_size)
             ge = torch.index_select(ge, 0, data['prop_ind'][i])
@@ -133,7 +136,8 @@ if __name__ == '__main__':
     # get dataset class and configs
     keep_one_per_prop = False
     use_cache = True
-    num_worker = 0
+    use_pseudo_property = True
+    num_workers = 0
     num_class_dict = {'nway': 16, 'pointwise': 1}
     num_graph_dict = {'nway': 1, 'pointwise': 2}
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
@@ -156,21 +160,24 @@ if __name__ == '__main__':
     id2ind, emb = load_embedding(args.emb_file, debug=False, emb_size=200) if args.emb_file else (None, None)
 
     # load data
-    train_data = Dataset(get_dataset_filepath('train'), subgraph_dict,
-                         id2ind=id2ind, edge_type='one', keep_one_per_prop=keep_one_per_prop,
-                         use_cache=use_cache)
-    train_dataloader = DataLoader(train_data, batch_size=128, shuffle=True,
-                                  num_workers=num_worker, collate_fn=train_data.collate_fn)
-    dev_data = Dataset(get_dataset_filepath('dev'), subgraph_dict,
-                       id2ind=id2ind, edge_type='one', keep_one_per_prop=keep_one_per_prop,
-                       use_cache=use_cache)
-    dev_dataloader = DataLoader(dev_data, batch_size=128, shuffle=False,
-                                num_workers=num_worker, collate_fn=dev_data.collate_fn)
-    test_data = Dataset(get_dataset_filepath('test'), subgraph_dict,
-                        id2ind=id2ind, edge_type='one', keep_one_per_prop=keep_one_per_prop,
-                        use_cache=use_cache)
-    test_dataloader = DataLoader(test_data, batch_size=128, shuffle=False,
-                                 num_workers=num_worker, collate_fn=test_data.collate_fn)
+    dataset_params = {
+        'subgraph_dict': subgraph_dict,
+        'id2ind': id2ind,
+        'edge_type': 'one',
+        'keep_one_per_prop': keep_one_per_prop,
+        'use_cache': use_cache,
+        'use_pseudo_property': use_pseudo_property
+    }
+    get_dataloader = lambda ds, shuffle: \
+        DataLoader(ds, batch_size=64, shuffle=shuffle,
+                   num_workers=num_workers, collate_fn=ds.collate_fn)
+
+    train_data = Dataset(get_dataset_filepath('train'), **dataset_params)
+    train_dataloader = get_dataloader(train_data, True)
+    dev_data = Dataset(get_dataset_filepath('dev'), **dataset_params)
+    dev_dataloader = get_dataloader(dev_data, False)
+    test_data = Dataset(get_dataset_filepath('test'), **dataset_params)
+    test_dataloader = get_dataloader(test_data, False)
 
     # config model, optimizer and evaluation
     model = Model(num_class=num_class_dict[args.dataset_format],

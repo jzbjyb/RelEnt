@@ -89,6 +89,29 @@ def prop_occur(args, only_isolate=True):
             time.sleep(60)
 
 
+def prop_occur_all(args):
+    rel_count_dict = defaultdict(lambda: 0)
+    rel_file_dict = {}
+    try:
+        with open(args.inp, 'r') as fin:
+            for i, l in tqdm(enumerate(fin)):
+                subj, rel, obj = l.strip().split('\t')
+                if not (subj.startswith('Q') and obj.startswith('Q') and rel.startswith('P')):
+                    # only consider real entities and properties
+                    continue
+                if rel_count_dict[rel] == 0:
+                    rel_file_dict[rel] = open(os.path.join(args.out, rel + '.txt'), 'w')
+                rel_file_dict[rel].write('{}\t{}\n'.format(subj, obj))
+                rel_count_dict[rel] += 1
+        with open(os.path.join(args.out, 'stat.txt'), 'w') as fout:
+            for pid, count in sorted(rel_count_dict.items(), key=lambda x: -x[1]):
+                fout.write('{}\t{}\n'.format(pid, count))
+    finally:
+        print('closing files ...')
+        for k, f in rel_file_dict.items():
+            f.close()
+
+
 def prop_entities(args):
     cache = set()
     rand_num, non_rand_num = 0, 0
@@ -132,7 +155,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
                         choices=['subprop', 'build_tree', 'prop_occur_only',
-                                 'prop_occur', 'prop_entities', 'hiro_to_subgraph'], required=True)
+                                 'prop_occur', 'prop_occur_all', 'prop_entities', 'hiro_to_subgraph'], required=True)
     parser.add_argument('--inp', type=str, required=True)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -149,6 +172,9 @@ if __name__ == '__main__':
     elif args.task == 'prop_occur':
         # get entities linked by all properties
         prop_occur(args, only_isolate=False)
+    elif args.task == 'prop_occur_all':
+        # get all entities linked by all properties using hiro's tuple file
+        prop_occur_all(args)
     elif args.task == 'prop_entities':
         # collect all the entities linked by the properties we are interested in
         prop_entities(args)

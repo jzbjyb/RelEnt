@@ -10,7 +10,8 @@ def hiro_subgraph_to_tree_dict(root: str,
                                hiro_subg: List[Tuple[List[str], str, int]],
                                max_hop=1) -> Tuple[str, Dict[str, List[Tuple[str, Dict]]]]:
     # group all the entities by their depth
-    hop_dict: Dict[int, List[Tuple[List[str], str, int]]] = defaultdict(lambda: [])
+    # the items in the tuple are: relations, current entity id, depth, parent entity id
+    hop_dict: Dict[int, List[Tuple[List[str], str, int, str]]] = defaultdict(lambda: [])
     for e in hiro_subg:
         depth = e[2]
         hop_dict[depth].append(e)
@@ -25,7 +26,7 @@ def hiro_subgraph_to_tree_dict(root: str,
         if hop > 1:
             raise NotImplementedError  # TODO: cannot construct the subgraph from hiro's data structure
         for e in hop_dict[hop]:
-            plist, tid, _ = e
+            plist, eid, _, parent_eid = e
             trace = tree_dict[1]
             parent = None
             for p in plist[:-1]:
@@ -33,7 +34,7 @@ def hiro_subgraph_to_tree_dict(root: str,
                 trace = trace[p][1]
             if plist[-1] not in trace:
                 trace[plist[-1]] = []
-            trace[plist[-1]].append((tid, {}))
+            trace[plist[-1]].append((eid, {}))
     return tree_dict
 
 

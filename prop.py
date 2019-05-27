@@ -154,8 +154,16 @@ def hiro_to_subgraph(args, max_hop=1):
         for i, l in tqdm(enumerate(eid_fin)):
             eid = l.strip()
             hiro_subg = json.loads(hiro_fin.readline().strip())
-            tree_dict = hiro_subgraph_to_tree_dict(eid, hiro_subg, max_hop=max_hop)
-            adj_list = tree_dict_to_adj(tree_dict)
+            if max_hop == 1:
+                adj_list = []
+                for node in hiro_subg:
+                    plist, tid, depth, parent_eid = node
+                    if depth > max_hop:
+                        break
+                    adj_list.append((eid, plist[-1], tid))
+            else:
+                tree_dict = hiro_subgraph_to_tree_dict(eid, hiro_subg, max_hop=max_hop)
+                adj_list = tree_dict_to_adj(tree_dict)
             fout.write(eid + '\t')  # write root entity
             fout.write('\t'.join(map(lambda x: ' '.join(x), adj_list)))
             fout.write('\n')

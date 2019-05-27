@@ -43,15 +43,19 @@ if __name__ == '__main__':
     subprops = read_subprop_file(args.prop_file)
     pid2plabel = dict(p[0] for p in subprops)
     subtrees, isolate = get_all_subtree(subprops)
+    subtree_pids = set()  # only consider properties in subtrees
+    [subtree_pids.add(pid) for subtree in subtrees for pid in subtree.traverse()]
 
     prop2treeid = dict((p, i) for i, subtree in enumerate(subtrees) for p in subtree.traverse())
 
-    ## all the property ids that have been crawled
+    ## all the property ids that have occurrence
     all_propids = set()
     for root, dirs, files in os.walk(args.prop_dir):
         for file in files:
             if file.endswith('.txt') or file.endswith('.txt.order'):  # also use order file
-                all_propids.add(file.split('.', 1)[0])
+                pid = file.split('.', 1)[0]
+                if pid in subtree_pids:
+                    all_propids.add(pid)
 
     ## load subgraph and emb for existence check
     subgraph_dict = read_subgraph_file(args.subgraph_file)

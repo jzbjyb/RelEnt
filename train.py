@@ -123,7 +123,7 @@ if __name__ == '__main__':
     parser.add_argument('--subprop_file', type=str, required=True, help='subprop file')
     parser.add_argument('--emb_file', type=str, default=None, help='embedding file')
     parser.add_argument('--no_cuda', action='store_true')
-    parser.add_argument('--filter_emb', action='store_true')
+    parser.add_argument('--filter_emb', type=str, default=None, help='path to save filtered embedding')
     parser.add_argument('--patience', type=int, default=0, help='number of epoch before running out of patience')
     args = parser.parse_args()
 
@@ -166,7 +166,7 @@ if __name__ == '__main__':
         with open(os.path.join(args.dataset_dir, 'pid2ind.tsv'), 'w') as fout:
             for i, (pid, count) in enumerate(sorted(all_properties, key=lambda x: -x[1])):
                 fout.write('{}\t{}\t{}\n'.format(pid, i, count))
-        filer_embedding(args.emb_file, 'data/test.emb', set(all_ids.keys()))
+        filer_embedding(args.emb_file, args.filter_emb, set(all_ids.keys()))
         exit(1)
 
     # load embedding

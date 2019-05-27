@@ -1,7 +1,8 @@
-from typing import List, Tuple, Dict, Iterable
+from typing import List, Tuple, Dict, Iterable, Union
 from collections import defaultdict
 from itertools import combinations
 from random import shuffle
+from tqdm import tqdm
 import subprocess, re, os, random
 import numpy as np
 
@@ -60,19 +61,19 @@ def get_sub_properties(pid):
     return subs
 
 
-def read_prop_occ_file_from_dir(prop: str, dir: str, filter=False, use_order=False):
+def read_prop_occ_file_from_dir(prop: str, dir: str, filter=False, contain_name=True, max_num=None, use_order=False):
     filepath = os.path.join(dir, prop + '.txt')
+    filepath_order = os.path.join(dir, prop + '.txt.order')
     if os.path.exists(filepath):
-        return read_prop_occ_file(filepath, filter=filter)
-    if use_order:
-        filepath = os.path.join(dir, prop + '.txt.order')
-        if os.path.exists(filepath):
-            return read_prop_occ_file(filepath, filter=filter)
-    raise Exception('{} not exist'.format(prop))
+        yield from read_prop_occ_file(filepath, filter=filter, contain_name=contain_name, max_num=max_num)
+    elif use_order and os.path.exists(filepath_order):
+        yield from read_prop_occ_file(filepath_order, filter=filter, contain_name=contain_name, max_num=max_num)
+    else:
+        raise Exception('{} not exist'.format(prop))
 
 
-def read_prop_occ_file(filepath, filter=False, contain_name=True) -> List[Tuple[str, str]]:
-    result = []
+def read_prop_occ_file(filepath, filter=False, contain_name=True, max_num=None) -> Iterable[Tuple[str, str]]:
+    count = 0
     with open(filepath, 'r') as fin:
         for l in fin:
             if contain_name:
@@ -82,8 +83,10 @@ def read_prop_occ_file(filepath, filter=False, contain_name=True) -> List[Tuple[
             if filter and not re.match('^Q[0-9]+$', hid) or not re.match('^Q[0-9]+$', tid):
                 # only keep entities
                 continue
-            result.append((hid, tid))
-    return result
+            yield (hid, tid)
+            count += 1
+            if max_num and count >= max_num:
+                break
 
 
 def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
@@ -189,9 +192,10 @@ def read_prop_file(filepath) -> List[str]:
 
 
 def read_subgraph_file(filepath) -> Dict[str, List[Tuple[str, str, str]]]:
+    print('load subgraphs ...')
     result = {}
     with open(filepath, 'r') as fin:
-        for l in fin:
+        for l in tqdm(fin):
             l = l.strip().split('\t')
             root = l[0]
             adjs = [tuple(adj.split(' ')) for adj in l[1:]]
@@ -217,9 +221,10 @@ def get_is_parent(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]):
     return is_parent
 
 def filter_prop_occ_by_subgraph_and_emb(prop: str,
-                                        prop_occs: List[Tuple[str, str]],
+                                        prop_occs: Union[List[Tuple[str, str]], Iterable[Tuple[str, str]]],
                                         subgraph_dict: Dict,
-                                        emb_set: set):
+                                        emb_set: set,
+                                        max_num: int = None):
     ''' filter out property occurrence without subgraph or embedding '''
     filtered = []
     # emb check
@@ -241,6 +246,8 @@ def filter_prop_occ_by_subgraph_and_emb(prop: str,
         except KeyError:
             continue
         filtered.append(occ)
+        if max_num and len(filtered) >= max_num:
+            break
     return filtered
 
 
@@ -263,14 +270,17 @@ class PropertyOccurrence():
               num_occ_per_subgraph: int = 1):
         pid2occs: Dict[str, List[Tuple]] = {}
         for p in pids:
-            occs = read_prop_occ_file_from_dir(p, prop_occ_dir, filter=True, use_order=True)
+            occs = read_prop_occ_file_from_dir(
+                p, prop_occ_dir, filter=True, contain_name=False, use_order=True)
             if subgraph_dict is not None and emb_set is not None:
-                occs = filter_prop_occ_by_subgraph_and_emb(p, occs, subgraph_dict, emb_set)  # check existence
+                occs = filter_prop_occ_by_subgraph_and_emb(
+                    p, occs, subgraph_dict, emb_set, max_num=max_occ_per_prop)  # check existence
             if len(occs) == 0:
                 continue  # skip empty property
             shuffle(occs)
             if max_occ_per_prop:
                 occs = occs[:max_occ_per_prop]
+            # TODO: number of occs of different properties are unbalanced
             pid2occs[p] = occs
         return cls(pid2occs, num_occ_per_subgraph=num_occ_per_subgraph)
 

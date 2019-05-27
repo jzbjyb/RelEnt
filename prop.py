@@ -112,27 +112,37 @@ def prop_occur_all(args):
             f.close()
 
 
-def prop_entities(args):
+def prop_entities(args, contain_name=True, pids=None):
     cache = set()
     rand_num, non_rand_num = 0, 0
+    if pids:
+        def file_iter():
+            for pid in pids:
+                file = os.path.join(args.inp, pid + '.txt')
+                if os.path.exists(file):
+                    yield file
+    else:
+        def file_iter():
+            nonlocal rand_num, non_rand_num
+            for root, dirs, files in os.walk(args.inp):
+                for file in files:
+                    if file.endswith('.txt'):
+                        rand_num += 1
+                    elif file.endswith('.txt.order'):
+                        non_rand_num += 1
+                    else:
+                        continue
+                    yield os.path.join(root, file)
     with open(args.out, 'w') as fout:
-        for root, dirs, files in os.walk(args.inp):
-            for file in files:
-                if file.endswith('.txt'):
-                    rand_num += 1
-                elif file.endswith('.txt.order'):
-                    non_rand_num += 1
-                else:
-                    continue
-                occs = read_prop_occ_file(os.path.join(root, file), filter=True)
-                with open(os.path.join(root, file), 'r') as fin:
-                    for hid, tid in occs:
-                        if hid not in cache:
-                            fout.write('{}\n'.format(hid))
-                            cache.add(hid)
-                        if tid not in cache:
-                            fout.write('{}\n'.format(tid))
-                            cache.add(tid)
+        for filepath in tqdm(file_iter()):
+            occs = read_prop_occ_file(filepath, filter=True, contain_name=contain_name)
+            for hid, tid in occs:
+                if hid not in cache:
+                    fout.write('{}\n'.format(hid))
+                    cache.add(hid)
+                if tid not in cache:
+                    fout.write('{}\n'.format(tid))
+                    cache.add(tid)
     print('#random file {}, #non-random file {}'.format(rand_num, non_rand_num))
 
 
@@ -177,7 +187,14 @@ if __name__ == '__main__':
         prop_occur_all(args)
     elif args.task == 'prop_entities':
         # collect all the entities linked by the properties we are interested in
-        prop_entities(args)
+        subprops = read_subprop_file('data/subprops.txt')
+        subtrees, isolate = get_all_subtree(subprops)
+        pids = set()
+        for subtree in subtrees:
+            for pid in subtree.traverse():
+                pids.add(pid)
+        print('totally {} pids'.format(len(pids)))
+        prop_entities(args, contain_name=False, pids=pids)
     elif args.task == 'hiro_to_subgraph':
         # convert the format hiro provides to list of tuples with a root node
         hiro_to_subgraph(args, max_hop=1)

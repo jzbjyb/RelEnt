@@ -70,11 +70,14 @@ def read_prop_occ_file_from_dir(prop: str, dir: str, filter=False, use_order=Fal
     raise Exception('{} not exist'.format(prop))
 
 
-def read_prop_occ_file(filepath, filter=False) -> List[Tuple[str, str]]:
+def read_prop_occ_file(filepath, filter=False, contain_name=True) -> List[Tuple[str, str]]:
     result = []
     with open(filepath, 'r') as fin:
         for l in fin:
-            hid, _, tid, _ = l.strip().split('\t')
+            if contain_name:
+                hid, _, tid, _ = l.strip().split('\t')
+            else:
+                hid, tid = l.strip().split('\t')
             if filter and not re.match('^Q[0-9]+$', hid) or not re.match('^Q[0-9]+$', tid):
                 # only keep entities
                 continue

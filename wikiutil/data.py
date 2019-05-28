@@ -1,8 +1,9 @@
-from typing import Tuple, List, Any, Dict
+from typing import Tuple, List, Any, Dict, Iterable
 from random import shuffle
 from tqdm import tqdm
 from collections import OrderedDict, defaultdict
 from functools import lru_cache
+import json
 import numpy as np
 import multiprocessing
 from multiprocessing import Manager
@@ -13,24 +14,40 @@ from .util import DefaultOrderedDict
 from .constant import AGG_NODE, AGG_PROP
 
 
+def load_lines(filepath) -> List[str]:
+    with open(filepath, 'r') as fin:
+        result = [l.strip() for l in fin]
+    return result
+
+
+def load_preprocessed_line(line: str, edge_type: str = 'one'):
+    ''' all of the fields are PropertySubgraph except for the last one, which is label '''
+    fields = line.strip().split('\t\t')
+    label = int(fields[-1])
+    fields = [PropertySubgraph.from_string(fields[i], edge_type=edge_type) for i in range(len(fields) - 1)]
+    return tuple(fields) + (label,)
+
+
 class DataPrepError(Exception):
     pass
 
 
 class PropertySubgraph():
     def __init__(self,
-                 property_id: str,
-                 occurrences: Tuple[Tuple[str, str]],
-                 subgraph_dict: Dict[str, List[Tuple[str, str, str]]],
-                 id2ind: Dict[str, int] = None,
+                 property_id: str = None,
+                 occurrences: Tuple[Tuple[str, str]] = None,
+                 subgraph_dict: Dict[str, List[Tuple[str, str, str]]] = None,
+                 emb_id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,  # TODO: add padding index
                  edge_type: str = 'one',
                  use_pseudo_property: bool = False,
                  agg_property: str = AGG_PROP):
+        if not property_id:
+            return
         self.pid = property_id
         self.occurrences = occurrences
         self.subgraph_dict = subgraph_dict
-        self.id2ind = id2ind
+        self.emb_id2ind = emb_id2ind
         self.padding_ind = padding_ind
         assert edge_type in {'one', 'property'}
         # 'one': properties are treated as nodes and only use a single type of edges
@@ -44,7 +61,34 @@ class PropertySubgraph():
 
     @property
     def size(self):
-        return len(self.id2ind)
+        return len(self.emb_ind)
+
+
+    @classmethod
+    def from_string(cls, format_str, edge_type):
+        '''
+        recover necessary properties from a formatted string.
+        necessary properties: pid, ind2adjs, emb_ind, prop_ind
+        '''
+        empty_sg = cls()
+        pid, ind2adjs, emb_ind, prop_ind = format_str.split('\t')
+        empty_sg.pid = pid
+        empty_sg.ind2adjs = json.loads(ind2adjs)
+        empty_sg.emb_ind = np.array([i for i in map(int, emb_ind.split(','))])
+        empty_sg.prop_ind = int(prop_ind)
+        empty_sg.edge_type = edge_type
+        return empty_sg
+
+
+    def to_string(self):
+        '''
+        dump necessary properties to a formatted string.
+        '''
+        return '{pid}\t{ind2adjs}\t{emb_ind}\t{prop_ind}'.format(
+            pid=self.pid,
+            ind2adjs=json.dumps(self.ind2adjs),
+            emb_ind=','.join(str(i) for i in self.emb_ind),
+            prop_ind=self.prop_ind)
 
 
     def get_pseudo_property_id(self, pid: str, head_id: str, tail_id: str, pid2count: Dict[str, int]):
@@ -104,16 +148,16 @@ class PropertySubgraph():
             adjs = list(set(adjs))
 
             # build emb index
-            if self.id2ind:
+            if self.emb_id2ind:
                 try:
-                    emb_ind = np.array([self.id2ind[k.split('-')[0]] for k, v in id2ind.items()])
+                    emb_ind = np.array([self.emb_id2ind[k.split('-')[0]] for k, v in id2ind.items()])
                 except KeyError:
                     raise DataPrepError
             else:
                 # when id2ind does not exist, use padding_ind
                 emb_ind = np.array([self.padding_ind] * len(id2ind))
 
-            return id2ind, {'one': adjs}, emb_ind, [0]
+            return id2ind, {'one': adjs}, emb_ind, 0
 
         elif self.edge_type == 'property':
             # build adj list
@@ -142,15 +186,15 @@ class PropertySubgraph():
                 pid2adjs[pid] = list(set(pid2adjs[pid]))
 
             # build emb index
-            if self.id2ind:
+            if self.emb_id2ind:
                 try:
-                    emb_ind = np.array([self.id2ind[k] for k in id2ind])
+                    emb_ind = np.array([self.emb_id2ind[k] for k in id2ind])
                 except KeyError:
                     raise DataPrepError
             else:
                 emb_ind = np.array([self.padding_ind] * len(id2ind))
 
-            return id2ind, pid2adjs, emb_ind, [0]
+            return id2ind, pid2adjs, emb_ind, 0
 
 
     @staticmethod
@@ -165,7 +209,7 @@ class PropertySubgraph():
             for ind, adjs in g.ind2adjs.items():
                 new_ind2adjs[ind].extend([(adj[0] + acc, adj[1] + acc) for adj in adjs])
             new_emb_ind.append(g.emb_ind)
-            new_prop_ind.append(acc)
+            new_prop_ind.append(acc + g.prop_ind)
             acc += g.size
         if edge_type == 'one':
             adjs_li = [new_ind2adjs[pid] for pid in new_ind2adjs]
@@ -203,7 +247,7 @@ class PropertyDataset(Dataset):
     def __init__(self,
                  subgraph_dict: Dict[str, List],
                  properties_as_relations: set = None,  # the property set used as relations
-                 id2ind: Dict[str, int] = None,
+                 emb_id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
                  edge_type: str = 'one',
                  use_cache: bool = False,
@@ -212,7 +256,7 @@ class PropertyDataset(Dataset):
         if properties_as_relations:
             self.pid2ind = OrderedDict((pid, i) for i, pid in enumerate(properties_as_relations))
         self.edge_type = edge_type
-        self.id2ind = id2ind
+        self.emb_id2ind = emb_id2ind
         self.padding_ind = padding_ind
         self.use_cache = use_cache
         self.use_pseudo_property = use_pseudo_property
@@ -246,7 +290,7 @@ class PropertyDataset(Dataset):
             return self._cache[property_occ]
         pid, occs = property_occ
         sg = PropertySubgraph(
-            pid, occs, self.subgraph_dict, self.id2ind,
+            pid, occs, self.subgraph_dict, self.emb_id2ind,
             self.padding_ind, self.edge_type, self.use_pseudo_property)
         if self.use_cache:
             self._cache[property_occ] = sg
@@ -262,12 +306,22 @@ class PropertyDataset(Dataset):
         return dict((k, nested_to(v)) for k, v in batch_dict.items() if k != 'meta')
 
 
+    def item_to_str(self, item):
+        fields = []
+        for field in item:
+            if type(field) is PropertySubgraph:
+                fields.append(field.to_string())
+            elif type(field) is int:
+                fields.append(str(field))
+        return '\t\t'.join(fields)
+
+
 class PointwiseDataset(PropertyDataset):
     def __init__(self,
                  filepath: str,
                  subgraph_dict: Dict[str, List],
                  properties_as_relations: set = None,  # the property set used as relations
-                 id2ind: Dict[str, int] = None,
+                 emb_id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
                  edge_type: str = 'one',
                  use_cache: bool = False,
@@ -277,17 +331,22 @@ class PointwiseDataset(PropertyDataset):
                  manager: Manager = None,
                  use_pseudo_property: bool = False):
         super(PointwiseDataset, self).__init__(
-            subgraph_dict, properties_as_relations, id2ind, padding_ind, edge_type, use_cache, use_pseudo_property)
+            subgraph_dict, properties_as_relations, emb_id2ind, padding_ind, edge_type, use_cache, use_pseudo_property)
         print('load data from {} ...'.format(filepath))
-        self.inst_list = read_multi_pointiwse_file(
-            filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
-        if neg_ratio:
-            self.inst_list = self.pos_neg_filter(self.inst_list, neg_ratio=neg_ratio)
+        if filepath.endswith('.prep'):
+            self.use_prep = True
+            self.inst_list = load_lines(filepath)
+        else:
+            self.use_prep = False
+            self.inst_list = read_multi_pointiwse_file(
+                filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
+            if neg_ratio:
+                self.inst_list = self.pos_neg_filter(self.inst_list, neg_ratio=neg_ratio)
 
         # to support multiprocess, use manager to share these objects between processes and avoid copy-on-write
         # manager is quite slow because of the communication between processes
         if manager:
-            assert type(id2ind) is type(subgraph_dict) is multiprocessing.managers.DictProxy
+            assert type(emb_id2ind) is type(subgraph_dict) is multiprocessing.managers.DictProxy
             self.inst_list = manager.list(self.inst_list)
         # TODO: use numpy array or shared array to avoid copy-on-write
 
@@ -297,8 +356,11 @@ class PointwiseDataset(PropertyDataset):
 
 
     def __getitem__(self, idx):
-        p1o, p2o, label = self.inst_list[idx]
-        return self.create_subgraph(p1o), self.create_subgraph(p2o), label
+        if self.use_prep:
+            return load_preprocessed_line(self.inst_list[idx], edge_type=self.edge_type)
+        else:
+            p1o, p2o, label = self.inst_list[idx]
+            return self.create_subgraph(p1o), self.create_subgraph(p2o), label
 
 
     def getids(self, getitem_result):
@@ -329,7 +391,7 @@ class NwayDataset(PropertyDataset):
                  filepath: str,
                  subgraph_dict: Dict[str, List],
                  properties_as_relations: set = None,  # the property set used as relations
-                 id2ind: Dict[str, int] = None,
+                 emb_id2ind: Dict[str, int] = None,
                  padding_ind: int = 0,
                  edge_type: str = 'one',
                  use_cache: bool = False,
@@ -337,10 +399,15 @@ class NwayDataset(PropertyDataset):
                  keep_one_per_prop: bool = False,
                  use_pseudo_property: bool = False):
         super(NwayDataset, self).__init__(
-            subgraph_dict, properties_as_relations, id2ind, padding_ind, edge_type, use_cache, use_pseudo_property)
+            subgraph_dict, properties_as_relations, emb_id2ind, padding_ind, edge_type, use_cache, use_pseudo_property)
         print('load data from {} ...'.format(filepath))
-        self.inst_list = read_nway_file(
-            filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
+        if filepath.endswith('.prep'):
+            self.use_prep = True
+            self.inst_list = load_lines(filepath)
+        else:
+            self.use_prep = False
+            self.inst_list = read_nway_file(
+                filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
 
         # TODO: use numpy array or shared array to avoid copy-on-write
 
@@ -350,8 +417,11 @@ class NwayDataset(PropertyDataset):
 
 
     def __getitem__(self, idx):
-        poccs, label = self.inst_list[idx]
-        return self.create_subgraph(poccs), label
+        if self.use_prep:
+            return load_preprocessed_line(self.inst_list[idx], edge_type=self.edge_type)
+        else:
+            poccs, label = self.inst_list[idx]
+            return self.create_subgraph(poccs), label
 
 
     def getids(self, getitem_result):

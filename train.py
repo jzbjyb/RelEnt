@@ -124,8 +124,12 @@ if __name__ == '__main__':
     parser.add_argument('--emb_file', type=str, default=None, help='embedding file')
     parser.add_argument('--no_cuda', action='store_true')
     parser.add_argument('--filter_emb', type=str, default=None, help='path to save filtered embedding')
+    parser.add_argument('--prep_data', action='store_true', help='preprocess the dataset')
+    parser.add_argument('--preped', action='store_true', help='whether to use preprocessed dataset')
     parser.add_argument('--patience', type=int, default=0, help='number of epoch before running out of patience')
     args = parser.parse_args()
+
+    torch.multiprocessing.set_sharing_strategy('file_system')
 
     random.seed(2019)
     np.random.seed(2019)
@@ -141,15 +145,20 @@ if __name__ == '__main__':
     keep_one_per_prop = False
     use_cache = True
     use_pseudo_property = True
-    edge_type = 'property'
-    num_workers = 0
+    edge_type = 'one'
+    num_workers = 4
+    batch_size = 128
     num_class_dict = {'nway': 16, 'pointwise': 1}
     num_graph_dict = {'nway': 1, 'pointwise': 2}
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
-    get_dataset_filepath = lambda split: os.path.join(args.dataset_dir, split + '.' + args.dataset_format)
+    get_dataset_filepath = lambda split, preped=False: os.path.join(
+        args.dataset_dir, split + '.' + args.dataset_format + ('.{}.prep'.format(edge_type) if preped else ''))
 
     # load subgraph
-    subgraph_dict = read_subgraph_file(args.subgraph_file)
+    if args.preped:
+        subgraph_dict = None
+    else:
+        subgraph_dict = read_subgraph_file(args.subgraph_file)
 
     # filter emb and get all the properties used by dry run datasets
     if args.filter_emb:
@@ -170,12 +179,12 @@ if __name__ == '__main__':
         exit(1)
 
     # load embedding
-    id2ind, emb = load_embedding(args.emb_file, debug=debug, emb_size=200) if args.emb_file else (None, None)
+    emb_id2ind, emb = load_embedding(args.emb_file, debug=debug, emb_size=200) if args.emb_file else (None, None)
     #properties_as_relations = {'P31', 'P21', 'P527', 'P17'}  # for debug
     properties_as_relations = load_tsv_as_dict(os.path.join(args.dataset_dir, 'pid2ind.tsv'), valuefunc=int)
     # add agg property and node
     properties_as_relations[AGG_PROP] = len(properties_as_relations)
-    id2ind[AGG_NODE] = len(id2ind)
+    emb_id2ind[AGG_NODE] = len(emb_id2ind)
     emb = np.concatenate([emb, np.zeros((1, emb.shape[1]), dtype=np.float32)], axis=0)
     # set num_edge_types
     num_edge_types = 1 if edge_type == 'one' else len(properties_as_relations)
@@ -184,22 +193,32 @@ if __name__ == '__main__':
     dataset_params = {
         'subgraph_dict': subgraph_dict,
         'properties_as_relations': properties_as_relations,
-        'id2ind': id2ind,
+        'emb_id2ind': emb_id2ind,
         'edge_type': edge_type,
         'keep_one_per_prop': keep_one_per_prop,
         'use_cache': use_cache,
         'use_pseudo_property': use_pseudo_property
     }
     get_dataloader = lambda ds, shuffle: \
-        DataLoader(ds, batch_size=64, shuffle=shuffle,
+        DataLoader(ds, batch_size=batch_size, shuffle=shuffle,
                    num_workers=num_workers, collate_fn=ds.collate_fn)
 
-    train_data = Dataset(get_dataset_filepath('train'), **dataset_params)
+    train_data = Dataset(get_dataset_filepath('train', args.preped), **dataset_params)
     train_dataloader = get_dataloader(train_data, True)
-    dev_data = Dataset(get_dataset_filepath('dev'), **dataset_params)
+    dev_data = Dataset(get_dataset_filepath('dev', args.preped), **dataset_params)
     dev_dataloader = get_dataloader(dev_data, False)
-    test_data = Dataset(get_dataset_filepath('test'), **dataset_params)
+    test_data = Dataset(get_dataset_filepath('test', args.preped), **dataset_params)
     test_dataloader = get_dataloader(test_data, False)
+
+    if args.prep_data:
+        for split in ['train', 'dev', 'test']:
+            prep_filepath = get_dataset_filepath(split, True)
+            ds = eval(split + '_data')
+            print('prep to {}'.format(prep_filepath))
+            with open(prep_filepath, 'w') as fout:
+                for i in tqdm(range(len(ds))):
+                    fout.write(ds.item_to_str(ds[i]) + '\n')
+        exit(1)
 
     # config model, optimizer and evaluation
     model = Model(num_class=num_class_dict[args.dataset_format],
@@ -220,7 +239,7 @@ if __name__ == '__main__':
     '''
 
     # train and test
-    show_progress = False
+    show_progress = True
     pat, best_dev_metric = 0, 0
     for epoch in range(300):
         # init performance

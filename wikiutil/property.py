@@ -2,6 +2,7 @@ from typing import List, Tuple, Dict, Iterable, Union
 from collections import defaultdict
 from itertools import combinations
 from random import shuffle
+from copy import deepcopy
 from tqdm import tqdm
 import subprocess, re, os, random
 import numpy as np
@@ -69,7 +70,7 @@ def read_prop_occ_file_from_dir(prop: str, dir: str, filter=False, contain_name=
     elif use_order and os.path.exists(filepath_order):
         yield from read_prop_occ_file(filepath_order, filter=filter, contain_name=contain_name, max_num=max_num)
     else:
-        raise Exception('{} not exist'.format(prop))
+        return  # empty iterator
 
 
 def read_prop_occ_file(filepath, filter=False, contain_name=True, max_num=None) -> Iterable[Tuple[str, str]]:
@@ -87,6 +88,21 @@ def read_prop_occ_file(filepath, filter=False, contain_name=True, max_num=None) 
             count += 1
             if max_num and count >= max_num:
                 break
+
+
+def get_prop_occ_by_minus(dir: str, main_prop: str, other_props: List[str], max_num: int = None):
+    main_occs = read_prop_occ_file_from_dir(
+        main_prop, dir, filter=False, contain_name=False, max_num=max_num, use_order=False)
+    main_occs = set(main_occs)
+    other_occs = set()
+    for prop in other_props:
+        occs = read_prop_occ_file_from_dir(
+            prop, dir, filter=False, contain_name=False, max_num=max_num, use_order=False)
+        other_occs.update(occs)
+    not_contained = list(main_occs - other_occs)
+    print('{} occs out of {} not contained in {}'.format(len(not_contained), len(main_occs), len(other_occs)))
+    shuffle(not_contained)
+    print(not_contained[:20])
 
 
 def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
@@ -269,12 +285,19 @@ class PropertyOccurrence():
               max_occ_per_prop: int = None,
               num_occ_per_subgraph: int = 1):
         pid2occs: Dict[str, List[Tuple]] = {}
-        for p in pids:
+        for p in tqdm(pids):
             occs = read_prop_occ_file_from_dir(
                 p, prop_occ_dir, filter=True, contain_name=False, use_order=True)
             if subgraph_dict is not None and emb_set is not None:
                 occs = filter_prop_occ_by_subgraph_and_emb(
                     p, occs, subgraph_dict, emb_set, max_num=max_occ_per_prop)  # check existence
+            else:
+                new_occs = []
+                for i, occ in enumerate(occs):
+                    if i >= max_occ_per_prop:
+                        break
+                    new_occs.append(occ)
+                occs = new_occs
             if len(occs) == 0:
                 continue  # skip empty property
             shuffle(occs)
@@ -343,14 +366,19 @@ class PropertySubtree():
 
 
     @staticmethod
-    def traverse_subtree(subtree):
-        yield subtree[0]
+    def traverse_subtree(subtree, ancestors=[], return_ancestors=False):
+        if return_ancestors:
+            yield subtree[0], ancestors
+        else:
+            yield subtree[0]
+        na: List[str] = deepcopy(ancestors)
+        na.append(subtree[0])
         for c in subtree[1]:
-            yield from PropertySubtree.traverse_subtree(c)
+            yield from PropertySubtree.traverse_subtree(c, ancestors=na, return_ancestors=return_ancestors)
 
 
-    def traverse(self):
-        yield from PropertySubtree.traverse_subtree(self.tree)
+    def traverse(self, return_ancestors=False):
+        yield from PropertySubtree.traverse_subtree(self.tree, ancestors=[], return_ancestors=return_ancestors)
 
 
     @staticmethod

@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import argparse, json, os, time
 from collections import defaultdict
 from tqdm import tqdm
 import numpy as np
 from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, \
-    hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file
+    hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file, PropertyOccurrence, read_subgraph_file
+from wikiutil.util import read_emb_ids
 from wikiutil.wikidata_query_service import get_property_occurrence
 
 def subprop(args):
@@ -169,11 +170,66 @@ def hiro_to_subgraph(args, max_hop=1):
             fout.write('\n')
 
 
+def prop_occur_ana(args, check_existence=False):
+    subprop_file, subgraph_file, emb_file, prop_occur_dir = args.inp.split(':')
+    subprops = read_subprop_file(subprop_file)
+    # get pid to plabel dict
+    pid2plabel = dict(p[0] for p in subprops)
+    # get all subtrees
+    subtrees, isolate = get_all_subtree(subprops)
+    subtree_pids = set()  # only consider properties in subtrees
+    [subtree_pids.add(pid) for subtree in subtrees for pid in subtree.traverse()]
+    if check_existence:
+        # load subgraph and emb
+        subgraph_dict = read_subgraph_file(subgraph_file)
+        emb_set = read_emb_ids(emb_file)
+    else:
+        subgraph_dict = emb_set = None
+    # get all occurrences
+    poccs = PropertyOccurrence.build(sorted(subtree_pids), prop_occur_dir,
+                                     subgraph_dict=subgraph_dict,
+                                     emb_set=emb_set,
+                                     max_occ_per_prop=1000000,
+                                     num_occ_per_subgraph=1)
+    subtree_pids &= set(poccs.pids)  # all the properties considered
+    # (child, ancestor, child count, ancestor count, overlap ratio)
+    overlaps: List[Tuple[str, str, int, int, float]] = []
+    # turn property occurrences into set
+    pid2occs = dict((k, set(v)) for k, v in poccs.pid2occs.items())
+    for subtree in tqdm(subtrees):
+        for child, ancestors in subtree.traverse(return_ancestors=True):
+            if child not in subtree_pids:
+                continue
+            child_occs = pid2occs[child]
+            print('{}\t{}'.format(child, len(child_occs)))
+            for ancestor in ancestors:
+                if ancestor not in subtree_pids:
+                    continue
+                anc_occs = pid2occs[ancestor]
+                # we only care about the portion of the children occurrences that are included by the ancestor
+                overlap_ratio = len(child_occs & anc_occs) / len(child_occs)
+                overlaps.append((child, ancestor, len(child_occs), len(anc_occs), overlap_ratio))
+                print('\t{}\t{}\t{}'.format(ancestor, len(anc_occs), overlap_ratio))
+    overlaps = sorted(overlaps, key=lambda x: -x[-1])
+    ol_by_ancestor: Dict[str, float] = defaultdict(list)
+    for child, ancestor, _, _, ol in overlaps:
+        ol_by_ancestor[ancestor].append(ol)
+    ol_by_ancestor = dict((anc, np.mean(ol)) for anc, ol in ol_by_ancestor.items())
+    with open(args.out, 'w') as fout:
+        fout.write('--- children and ancestor property occurrences overlap ---\n\n')
+        for overlap in overlaps:
+            fout.write(' '.join(map(str, overlap)) + '\n')
+        fout.write('\n\n--- ancestor property occurrences overlap ---\n\n')
+        for anc, overlap in sorted(ol_by_ancestor.items(), key=lambda x: -x[1]):
+            fout.write('{}\t{}\n'.format(anc, overlap))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
                         choices=['subprop', 'build_tree', 'prop_occur_only',
-                                 'prop_occur', 'prop_occur_all', 'prop_entities', 'hiro_to_subgraph'], required=True)
+                                 'prop_occur', 'prop_occur_all', 'prop_entities',
+                                 'hiro_to_subgraph', 'prop_occur_ana'], required=True)
     parser.add_argument('--inp', type=str, required=True)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -206,3 +262,6 @@ if __name__ == '__main__':
     elif args.task == 'hiro_to_subgraph':
         # convert the format hiro provides to list of tuples with a root node
         hiro_to_subgraph(args, max_hop=1)
+    elif args.task == 'prop_occur_ana':
+        # check entity-level overlap between parent and children properties
+        prop_occur_ana(args, check_existence=False)

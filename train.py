@@ -8,7 +8,7 @@ from collections import defaultdict
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 from multiprocessing import Manager
 from wikiutil.data import PointwiseDataset, NwayDataset
 from wikiutil.util import load_embedding, filer_embedding, load_tsv_as_dict
@@ -140,13 +140,15 @@ if __name__ == '__main__':
     else:
         device = torch.device('cuda')
 
-    # get dataset class and configs
+    # configs
+    method = 'ggnn'
+    lr = 0.001 if method == 'emb' else 0.0001
     debug = False
-    keep_one_per_prop = False
+    keep_one_per_prop = True if method == 'emb' else False
     use_cache = True
     use_pseudo_property = True
     edge_type = 'one'
-    num_workers = 4
+    num_workers = 1
     batch_size = 128
     num_class_dict = {'nway': 16, 'pointwise': 1}
     num_graph_dict = {'nway': 1, 'pointwise': 2}
@@ -199,12 +201,16 @@ if __name__ == '__main__':
         'use_cache': use_cache,
         'use_pseudo_property': use_pseudo_property
     }
-    get_dataloader = lambda ds, shuffle: \
-        DataLoader(ds, batch_size=batch_size, shuffle=shuffle,
+    get_dataloader = lambda ds, shuffle, sampler=None: \
+        DataLoader(ds, batch_size=batch_size, shuffle=shuffle, sampler=sampler,
                    num_workers=num_workers, collate_fn=ds.collate_fn)
 
     train_data = Dataset(get_dataset_filepath('train', args.preped), **dataset_params)
-    train_dataloader = get_dataloader(train_data, True)
+    if method == 'emb':
+        train_dataloader = get_dataloader(train_data, True)
+    else:
+        train_dataloader = get_dataloader(
+            train_data, False, RandomSampler(train_data, replacement=True, num_samples=10000))
     dev_data = Dataset(get_dataset_filepath('dev', args.preped), **dataset_params)
     dev_dataloader = get_dataloader(dev_data, False)
     test_data = Dataset(get_dataset_filepath('test', args.preped), **dataset_params)
@@ -225,10 +231,10 @@ if __name__ == '__main__':
                   num_graph=num_graph_dict[args.dataset_format],
                   emb=emb,
                   hidden_size=64,
-                  method='ggnn',
+                  method=method,
                   num_edge_types=num_edge_types)
     model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)  # 1e-3 for emb and 1e-4 for ggnn
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     '''
     train_prop_set = set(read_prop_file(os.path.join(args.dataset_dir, 'train.prop')))
     train_metirc = AnalogyEval(args.subprop_file, method='parent', metric='auc_map',

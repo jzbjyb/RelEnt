@@ -2,6 +2,7 @@ from typing import Tuple, List, Dict
 from collections import defaultdict
 import numpy as np
 from random import shuffle
+from operator import itemgetter
 import json
 from sklearn.metrics import precision_recall_curve, auc, average_precision_score
 from .property import read_subprop_file, get_is_sibling, get_all_subtree, get_is_parent
@@ -200,7 +201,8 @@ def accuray(predictions: List[Tuple[str, List, int]], method='macro'):
         total += 1
         corr += c
     if method == 'macro':
-        acc = np.mean([np.mean(v) for k, v in pid2acc.items()])
+        acc_per_prop = sorted([(k, np.mean(v)) for k, v in pid2acc.items()], key=lambda x: -x[1])
+        acc = np.mean(list(map(itemgetter(1), acc_per_prop)))
     elif method == 'micro':
         acc = corr / total
     return acc

@@ -237,6 +237,7 @@ def get_is_parent(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]):
             is_parent.add((p, c[0]))
     return is_parent
 
+
 def filter_prop_occ_by_subgraph_and_emb(prop: str,
                                         prop_occs: Union[List[Tuple[str, str]], Iterable[Tuple[str, str]]],
                                         subgraph_dict: Dict,
@@ -304,7 +305,7 @@ class PropertySubtree():
     def split_within_subtree(subtree, tr, dev, te, return_parent: bool = False, filter_set: set = None):
         ''' split the subtree by spliting each tir into train/dev/test set '''
         parent = subtree[0]
-        siblings = [c[0] for c in subtree[1]]
+        siblings = [c[0] for c in subtree[1] if filter_set is None or c[0] in filter_set]
         shuffle(siblings)
         trs = int(len(siblings) * tr)
         devs = int(len(siblings) * dev)
@@ -312,11 +313,8 @@ class PropertySubtree():
         test_props = siblings[trs + devs:]
         dev_props = siblings[trs:trs + devs]
         train_props = siblings[:trs]
-        if filter_set:
-            train_props = list(set(train_props) & filter_set)
-            dev_props = list(set(dev_props) & filter_set)
-            test_props = list(set(test_props) & filter_set)
-        if len(train_props) > 0 and len(dev_props) > 0 and len(test_props) > 0:
+        if len(train_props) > 0 and len(dev_props) > 0 and len(test_props) > 0 and \
+                (filter_set is None or parent in filter_set):
             if return_parent:
                 yield parent, train_props, dev_props, test_props
             else:
@@ -407,6 +405,15 @@ def get_all_subtree(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]) \
     print('{} isolated prop'.format(len(isolate)))
 
     return subtrees, isolate
+
+
+def get_is_ancestor(subtrees: List[PropertySubtree]):
+    is_ancestor = set()
+    for subtree in tqdm(subtrees):
+        for child, ancestors in subtree.traverse(return_ancestors=True):
+            for anc in ancestors:
+                is_ancestor.add((anc, child))
+    return is_ancestor
 
 
 class PropertyOccurrence():
@@ -532,22 +539,32 @@ class PropertyOccurrence():
             yield occs[i]
 
 
-    def get_all_pairs(self, pid1: str, pid2: str, num_sample: int) -> Iterable[Tuple[List, List]]:
+    def get_all_pairs(self,
+                      pid1: str,
+                      pid2: str,
+                      num_sample: int,
+                      sam_for_pid1: int = 1,
+                      sam_for_pid2: int = 1) -> Iterable[Tuple[List, List]]:
         p1occs = self._pid2multioccs[pid1]
         p2occs = self._pid2multioccs[pid2]
-        p1ol = len(p1occs)
-        p2ol = len(p2occs)
 
         sam_prob = min(1, num_sample / (len(p1occs) * len(p2occs)))
 
-        if sam_prob == 1:
+        if sam_prob == 1 and sam_for_pid1 == 1 and sam_for_pid2 == 1:
             for p1o in p1occs:
                 for p2o in p2occs:
                     yield p1o, p2o  # p1o and p2o are lists of occurrences
         else:
             for i in range(num_sample):
-                p1o = min(int(p1ol * random.random()), p1ol - 1)
-                p1o = p1occs[p1o]
-                p2o = min(int(p2ol * random.random()), p2ol - 1)
-                p2o = p2occs[p2o]
+                p1o = self.sample_n_occs(pid1, sam_for_pid1)
+                p2o = self.sample_n_occs(pid2, sam_for_pid2)
                 yield p1o, p2o  # p1o and p2o are lists of occurrences
+
+
+    def sample_n_occs(self, pid: str, n: int = 1):
+        occs: List[Tuple] = []
+        poccs = self._pid2multioccs[pid]
+        while n > 0:
+            occs.extend(poccs[min(int(len(poccs) * random.random()), len(poccs) - 1)])
+            n -= 1
+        return occs

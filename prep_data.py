@@ -9,7 +9,7 @@ from itertools import combinations, product
 from tqdm import tqdm
 import numpy as np
 from wikiutil.property import read_subprop_file, get_all_subtree, \
-    get_is_sibling, read_subgraph_file, get_is_parent, PropertyOccurrence
+    get_is_sibling, read_subgraph_file, get_is_parent, PropertyOccurrence, get_is_ancestor
 from wikiutil.util import read_emb_ids, save_emb_ids, DefaultOrderedDict
 
 
@@ -31,6 +31,8 @@ if __name__ == '__main__':
                         help='number of occurrences used for each property subgraph')
     parser.add_argument('--method', type=str, default='by_tree',
                         choices=['by_tree', 'within_tree', 'by_entail', 'by_entail-n_way'])
+    parser.add_argument('--property_population', action='store_true',
+                        help='parent properties are composed by children properties')
     parser.add_argument('--contain_train', action='store_true',
                         help='whether dev and test contain training properties')
     parser.add_argument('--num_sample', type=int, default=10000,
@@ -61,11 +63,22 @@ if __name__ == '__main__':
     subgraph_dict = read_subgraph_file(args.subgraph_file)
     #save_emb_ids(args.emb_file, args.emb_file + '.id')
     emb_set = read_emb_ids(args.emb_file)
-    poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
-                                     subgraph_dict=subgraph_dict,
-                                     emb_set=emb_set,
-                                     max_occ_per_prop=args.max_occ_per_prop,
-                                     num_occ_per_subgraph=args.num_occ_per_subgraph)
+    if args.property_population:
+        poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
+                                         subgraph_dict=subgraph_dict,
+                                         emb_set=emb_set,
+                                         max_occ_per_prop=args.max_occ_per_prop,
+                                         num_occ_per_subgraph=args.num_occ_per_subgraph,
+                                         min_occ_per_prop=1000,
+                                         populate_method='combine_child',
+                                         subtrees=subtrees)
+    else:
+        poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
+                                         subgraph_dict=subgraph_dict,
+                                         emb_set=emb_set,
+                                         max_occ_per_prop=args.max_occ_per_prop,
+                                         num_occ_per_subgraph=args.num_occ_per_subgraph,
+                                         min_occ_per_prop=1000)
 
     print('{} out of {} property pass existence check'.format(len(poccs.pids), len(all_propids)))
     all_propids &= set(poccs.pids)
@@ -133,6 +146,7 @@ if __name__ == '__main__':
     ## get multiple occurrence for each property
     is_sibling = get_is_sibling(subprops)
     is_parent = get_is_parent(subprops)
+    is_ancestor = get_is_ancestor(subtrees)
     final_prop_split: Dict[str, str] = defaultdict(lambda: '*')
     label2id = DefaultOrderedDict(lambda: len(label2id))  # collect labels
     for prop_split_name in ['train_prop', 'dev_prop', 'test_prop']:
@@ -150,8 +164,9 @@ if __name__ == '__main__':
             # "pid _ occ1_head _ occ1_tail _ occ2_head _ occ2_tail ..." where _ is space
             return '{} {}'.format(pid, ' '.join(map(lambda occ: ' '.join(occ), poccs)))
 
-        def get_all_pairs(pid1, pid2):
-            for p1occs, p2occs in poccs.get_all_pairs(pid1, pid2, args.num_sample):
+        def get_all_pairs(pid1, pid2, pid1_num=1, pid2_num=1):
+            for p1occs, p2occs in poccs.get_all_pairs(
+                    pid1, pid2, args.num_sample, sam_for_pid1=pid1_num, sam_for_pid2=pid2_num):
                 yield format_occs(pid1, p1occs), format_occs(pid2, p2occs)
 
         def get_all_occs(pid):
@@ -171,16 +186,20 @@ if __name__ == '__main__':
                 def pair_label_iter():
                     for p1, p2 in pair_iter():
                         yield p1, p2, int((p1, p2) in is_sibling)
+                _get_all_pairs = lambda p1, p2: get_all_pairs(p1, p2)
             elif args.method in {'by_entail'}:
                 def pair_iter():
-                    # TODO: bug, prop_split might overlap with parent_prop
-                    yield from product(parent_prop, prop_split)
+                    for parent, child in product(parent_prop, prop_split):
+                        if parent == child:
+                            continue
+                        yield parent, child
                 def pair_label_iter():
                     for p1, p2 in pair_iter():
-                        yield p1, p2, int((p1, p2) in is_parent)
+                        yield p1, p2, int((p1, p2) in is_ancestor)  # TODO: use ancestor as positive examples?
+                _get_all_pairs = lambda p1, p2: get_all_pairs(p1, p2, 5, 1)  # TODO: parent use 5 times occurrence
             with open(data_filename, 'w') as fout:
                 for p1, p2, label in tqdm(pair_label_iter()):
-                    for p1o, p2o in get_all_pairs(p1, p2):
+                    for p1o, p2o in _get_all_pairs(p1, p2):
                         fout.write('{}\t{}\t{}\n'.format(label, p1o, p2o))
 
         # generate n way classification data

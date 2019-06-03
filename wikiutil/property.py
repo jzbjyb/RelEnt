@@ -75,6 +75,7 @@ def read_prop_occ_file_from_dir(prop: str, dir: str, filter=False, contain_name=
 
 def read_prop_occ_file(filepath, filter=False, contain_name=True, max_num=None) -> Iterable[Tuple[str, str]]:
     count = 0
+    # TODO: there might be duplicates in the file
     with open(filepath, 'r') as fin:
         for l in fin:
             if contain_name:
@@ -267,88 +268,6 @@ def filter_prop_occ_by_subgraph_and_emb(prop: str,
     return filtered
 
 
-class PropertyOccurrence():
-    def __init__(self,
-                 pid2occs: Dict[str, List[Tuple]],
-                 num_occ_per_subgraph: int = 1):
-        self.pid2occs = pid2occs
-        self.num_occ_per_subgraph = num_occ_per_subgraph
-        self._pid2multioccs = dict((pid, self.group_occs(pid, num_occ_per_subgraph)) for pid in pid2occs)
-
-
-    @classmethod
-    def build(cls,
-              pids: List[str],
-              prop_occ_dir: str,
-              subgraph_dict: dict = None,
-              emb_set: set = None,
-              max_occ_per_prop: int = None,
-              num_occ_per_subgraph: int = 1):
-        pid2occs: Dict[str, List[Tuple]] = {}
-        for p in tqdm(pids):
-            occs = read_prop_occ_file_from_dir(
-                p, prop_occ_dir, filter=True, contain_name=False, use_order=True)
-            if subgraph_dict is not None and emb_set is not None:
-                occs = filter_prop_occ_by_subgraph_and_emb(
-                    p, occs, subgraph_dict, emb_set, max_num=max_occ_per_prop)  # check existence
-            else:
-                new_occs = []
-                for i, occ in enumerate(occs):
-                    if i >= max_occ_per_prop:
-                        break
-                    new_occs.append(occ)
-                occs = new_occs
-            if len(occs) == 0:
-                continue  # skip empty property
-            shuffle(occs)
-            if max_occ_per_prop:
-                occs = occs[:max_occ_per_prop]
-            # TODO: number of occs of different properties are unbalanced
-            pid2occs[p] = occs
-        return cls(pid2occs, num_occ_per_subgraph=num_occ_per_subgraph)
-
-
-    @property
-    def pids(self) -> List[str]:
-        return list(self.pid2occs.keys())
-
-
-    def __getitem__(self, item: str) -> List[Tuple]:
-        return self.pid2occs[item]
-
-
-    def group_occs(self, pid, size) -> List[List[Tuple]]:
-        occs = self.pid2occs[pid]
-        return [occs[i:i+size] for i in range(0, len(occs), size)]
-
-
-    def get_all_occs(self, pid: str, num_sample: int) -> Iterable[List]:
-        occs = self._pid2multioccs[pid]
-        for i in range(min(num_sample, len(occs))):
-            yield occs[i]
-
-
-    def get_all_pairs(self, pid1: str, pid2: str, num_sample: int) -> Iterable[Tuple[List, List]]:
-        p1occs = self._pid2multioccs[pid1]
-        p2occs = self._pid2multioccs[pid2]
-        p1ol = len(p1occs)
-        p2ol = len(p2occs)
-
-        sam_prob = min(1, num_sample / (len(p1occs) * len(p2occs)))
-
-        if sam_prob == 1:
-            for p1o in p1occs:
-                for p2o in p2occs:
-                    yield p1o, p2o  # p1o and p2o are lists of occurrences
-        else:
-            for i in range(num_sample):
-                p1o = min(int(p1ol * random.random()), p1ol - 1)
-                p1o = p1occs[p1o]
-                p2o = min(int(p2ol * random.random()), p2ol - 1)
-                p2o = p2occs[p2o]
-                yield p1o, p2o  # p1o and p2o are lists of occurrences
-
-
 class PropertySubtree():
     def __init__(self, tree: Tuple[str, List]):
         self.tree = tree
@@ -488,3 +407,147 @@ def get_all_subtree(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]) \
     print('{} isolated prop'.format(len(isolate)))
 
     return subtrees, isolate
+
+
+class PropertyOccurrence():
+    def __init__(self,
+                 pid2occs: Dict[str, List[Tuple]],
+                 num_occ_per_subgraph: int = 1):
+        self.pid2occs = pid2occs
+        self.num_occ_per_subgraph = num_occ_per_subgraph
+        self._pid2multioccs = dict((pid, self.group_occs(pid, num_occ_per_subgraph)) for pid in pid2occs)
+
+
+    @classmethod
+    def build(cls,
+              pids: List[str],
+              prop_occ_dir: str,
+              subgraph_dict: dict = None,
+              emb_set: set = None,
+              max_occ_per_prop: int = None,
+              min_occ_per_prop: int = None,  # property with number of occ less than this will be removed
+              num_occ_per_subgraph: int = 1,
+              populate_method: str = None,
+              subtrees: List[PropertySubtree] = None):
+        pid2occs: Dict[str, List[Tuple]] = {}
+        num_long_tail_prop = 0
+        for p in tqdm(pids):
+            occs = read_prop_occ_file_from_dir(
+                p, prop_occ_dir, filter=True, contain_name=False, use_order=True)
+            if subgraph_dict is not None and emb_set is not None:
+                occs = filter_prop_occ_by_subgraph_and_emb(
+                    p, occs, subgraph_dict, emb_set, max_num=max_occ_per_prop)  # check existence
+            else:
+                new_occs = []
+                for i, occ in enumerate(occs):
+                    if i >= max_occ_per_prop:
+                        break
+                    new_occs.append(occ)
+                occs = new_occs
+            if len(occs) == 0:
+                continue  # skip empty property
+            if min_occ_per_prop is not None and len(occs) < min_occ_per_prop:
+                num_long_tail_prop += 1
+                continue  # skip long tail properties
+            shuffle(occs)
+            if max_occ_per_prop:
+                occs = occs[:max_occ_per_prop]
+            # TODO: number of occs of different properties are unbalanced
+            pid2occs[p] = occs
+        if min_occ_per_prop is not None:
+            print('remove {} long tail properties with threshold {}'.format(
+                num_long_tail_prop, min_occ_per_prop))
+        if populate_method is not None:
+            print('populate properties recursively')
+            new_pid2occs: Dict[str, set] = {}
+            for subtree in tqdm(subtrees):
+                PropertyOccurrence.recursive_complete(
+                    pid2occs, subtree.tree, new_pid2occs, populate_method=populate_method)
+            pid2occs = dict((k, list(v)) for k, v in new_pid2occs.items())
+        return cls(pid2occs, num_occ_per_subgraph=num_occ_per_subgraph)
+
+
+    @staticmethod
+    def recursive_complete(pid2occs: Dict[str, List[Tuple]],
+                           subtree: Tuple[str, List],
+                           new_pid2occs: Dict[str, set],
+                           populate_method: str = 'combine_child'):
+        # in all these populate_method, overlap should be avoided
+        # 'combine_child': occs of a property is the union of all its children
+        # 'combine_child_and_self': occs of a property is the union of all its children and itself
+        parent, childs = subtree
+        if parent in new_pid2occs:  # has been processed
+            return
+        if len(childs) == 0:  # leaf node
+            if parent in pid2occs:
+                new_pid2occs[parent] = set(pid2occs[parent])
+            return
+        for child in childs:  # none-leaf node, go deeper
+            PropertyOccurrence.recursive_complete(
+                pid2occs, child, new_pid2occs, populate_method=populate_method)
+        # populate current property using children
+        if populate_method in {'combine_child', 'combine_child_and_self'}:
+            # collect all occs of children
+            childs_occs = set()
+            for child in childs:
+                if child[0] not in new_pid2occs:
+                    continue
+                occs = new_pid2occs[child[0]]
+                # TODO: node with multiple parents are used multiple times
+                childs_occs.update(occs)
+            # give first half to parent
+            childs_occs = list(childs_occs)
+            shuffle(childs_occs)
+            parent_occs = set(childs_occs[:len(childs_occs) // 3])  # TODO: how to set up the number
+            # remove them from children
+            for child in childs:
+                if child[0] not in new_pid2occs:
+                    continue
+                new_pid2occs[child[0]] -= parent_occs  # parent's parent can still overlap with these children
+            if populate_method == 'combine_child_and_self' and parent in pid2occs:
+                parent_occs.update(pid2occs[parent])  # add self
+            if len(parent_occs) > 0:
+                new_pid2occs[parent] = parent_occs
+        else:
+            raise NotImplementedError
+
+
+    @property
+    def pids(self) -> List[str]:
+        return list(self.pid2occs.keys())
+
+
+    def __getitem__(self, item: str) -> List[Tuple]:
+        return self.pid2occs[item]
+
+
+    def group_occs(self, pid, size) -> List[List[Tuple]]:
+        occs = self.pid2occs[pid]
+        return [occs[i:i+size] for i in range(0, len(occs), size)]
+
+
+    def get_all_occs(self, pid: str, num_sample: int) -> Iterable[List]:
+        occs = self._pid2multioccs[pid]
+        for i in range(min(num_sample, len(occs))):
+            yield occs[i]
+
+
+    def get_all_pairs(self, pid1: str, pid2: str, num_sample: int) -> Iterable[Tuple[List, List]]:
+        p1occs = self._pid2multioccs[pid1]
+        p2occs = self._pid2multioccs[pid2]
+        p1ol = len(p1occs)
+        p2ol = len(p2occs)
+
+        sam_prob = min(1, num_sample / (len(p1occs) * len(p2occs)))
+
+        if sam_prob == 1:
+            for p1o in p1occs:
+                for p2o in p2occs:
+                    yield p1o, p2o  # p1o and p2o are lists of occurrences
+        else:
+            for i in range(num_sample):
+                p1o = min(int(p1ol * random.random()), p1ol - 1)
+                p1o = p1occs[p1o]
+                p2o = min(int(p2ol * random.random()), p2ol - 1)
+                p2o = p2occs[p2o]
+                yield p1o, p2o  # p1o and p2o are lists of occurrences

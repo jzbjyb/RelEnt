@@ -170,7 +170,7 @@ def hiro_to_subgraph(args, max_hop=1):
             fout.write('\n')
 
 
-def prop_occur_ana(args, check_existence=False):
+def prop_occur_ana(args, check_existence=False, show_detail=False):
     subprop_file, subgraph_file, emb_file, prop_occur_dir = args.inp.split(':')
     subprops = read_subprop_file(subprop_file)
     # get pid to plabel dict
@@ -191,6 +191,12 @@ def prop_occur_ana(args, check_existence=False):
                                      emb_set=emb_set,
                                      max_occ_per_prop=1000000,
                                      num_occ_per_subgraph=1)
+                                     #min_occ_per_prop=1000,
+                                     #populate_method='combine_child',
+                                     #subtrees=subtrees)
+    print('property occurrence count:')
+    p2count = [(x[0], len(x[1])) for x in poccs.pid2occs.items()]
+    print(sorted(p2count, key=lambda x: -x[1]))
     subtree_pids &= set(poccs.pids)  # all the properties considered
     # (child, ancestor, child count, ancestor count, overlap ratio)
     overlaps: List[Tuple[str, str, int, int, float]] = []
@@ -201,7 +207,8 @@ def prop_occur_ana(args, check_existence=False):
             if child not in subtree_pids:
                 continue
             child_occs = pid2occs[child]
-            print('{}\t{}'.format(child, len(child_occs)))
+            if show_detail:
+                print('{}\t{}'.format(child, len(child_occs)))
             for ancestor in ancestors:
                 if ancestor not in subtree_pids:
                     continue
@@ -209,7 +216,8 @@ def prop_occur_ana(args, check_existence=False):
                 # we only care about the portion of the children occurrences that are included by the ancestor
                 overlap_ratio = len(child_occs & anc_occs) / len(child_occs)
                 overlaps.append((child, ancestor, len(child_occs), len(anc_occs), overlap_ratio))
-                print('\t{}\t{}\t{}'.format(ancestor, len(anc_occs), overlap_ratio))
+                if show_detail:
+                    print('\t{}\t{}\t{}'.format(ancestor, len(anc_occs), overlap_ratio))
     overlaps = sorted(overlaps, key=lambda x: -x[-1])
     ol_by_ancestor: Dict[str, float] = defaultdict(list)
     for child, ancestor, _, _, ol in overlaps:
@@ -264,4 +272,4 @@ if __name__ == '__main__':
         hiro_to_subgraph(args, max_hop=1)
     elif args.task == 'prop_occur_ana':
         # check entity-level overlap between parent and children properties
-        prop_occur_ana(args, check_existence=False)
+        prop_occur_ana(args, check_existence=False, show_detail=False)

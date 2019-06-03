@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler
+from wikiutil.data import PointwiseDataset, NwayDataset
 from wikiutil.util import filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
 from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise
 from wikiutil.property import read_prop_file, read_subgraph_file

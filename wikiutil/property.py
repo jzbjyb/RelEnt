@@ -234,7 +234,7 @@ def read_subgraph_file(filepath, only_root=False) -> Dict[str, List[Tuple[str, s
         for l in tqdm(fin):
             l = l.strip().split('\t', 1)
             root = l[0]
-            if not only_root:
+            if not only_root and len(l) > 1:
                 adjs = [tuple(adj.split(' ')) for adj in l[1].split('\t')]
             else:
                 adjs = []

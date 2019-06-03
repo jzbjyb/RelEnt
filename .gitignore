@@ -226,3 +226,4 @@ env_for_train
 slurm_out
 cache
 exp_result
+model

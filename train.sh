@@ -20,6 +20,8 @@ python train.py \
     --subprop_file data/subprops.txt \
     --emb_file ${dataset_dir}/emb.txt.gz \
     --patience 40 \
-    #--preped
-    #--preped
-    #--prep_data
+    --save model/ggnn.bin \
+    --preped \
+    --num_workers 4 \
+    --method ggnn \
+    --batch_size 32

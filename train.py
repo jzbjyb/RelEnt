@@ -126,6 +126,13 @@ if __name__ == '__main__':
     parser.add_argument('--prep_data', action='store_true', help='preprocess the dataset')
     parser.add_argument('--preped', action='store_true', help='whether to use preprocessed dataset')
     parser.add_argument('--patience', type=int, default=0, help='number of epoch before running out of patience')
+    parser.add_argument('--save', type=str, default=None, help='path to save the model')
+    parser.add_argument('--load', type=str, default=None, help='path to load the model from')
+    parser.add_argument('--num_workers', type=int, default=0, help='number of workers used to load data')
+
+    parser.add_argument('--method', type=str, default='emb', help='which model to use')
+    parser.add_argument('--batch_size', type=int, default=32, help='batch_size')
+
     args = parser.parse_args()
 
     torch.multiprocessing.set_sharing_strategy('file_system')
@@ -140,15 +147,15 @@ if __name__ == '__main__':
         device = torch.device('cuda')
 
     # configs
-    method = 'emb'
+    method = args.method
     lr = 0.005 if method == 'emb' else 0.0001
     debug = False
     keep_one_per_prop = True if method == 'emb' else False
-    use_cache = True
+    use_cache = False
     use_pseudo_property = True
     edge_type = 'one'
-    num_workers = 1
-    batch_size = 128
+    num_workers = args.num_workers
+    batch_size = args.batch_size
     num_class_dict = {'nway': 16, 'pointwise': 1}
     num_graph_dict = {'nway': 1, 'pointwise': 2}
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
@@ -216,7 +223,7 @@ if __name__ == '__main__':
         train_dataloader = get_dataloader(train_data, True)
     else:
         train_dataloader = get_dataloader(
-            train_data, False, RandomSampler(train_data, replacement=True, num_samples=10000))
+            train_data, False, RandomSampler(train_data, replacement=True, num_samples=50000))
     dev_data = Dataset(get_dataset_filepath('dev', args.preped), **dataset_params)
     dev_dataloader = get_dataloader(dev_data, False)
     test_data = Dataset(get_dataset_filepath('test', args.preped), **dataset_params)
@@ -239,6 +246,9 @@ if __name__ == '__main__':
                   hidden_size=64,
                   method=method,
                   num_edge_types=num_edge_types)
+    if args.load:
+        print('load model from {}'.format(args.load))
+        model.load_state_dict(torch.load(args.load))
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     '''
@@ -295,3 +305,6 @@ if __name__ == '__main__':
             else:
                 pat = 0
                 best_dev_metric = dev_metric
+                if args.save:
+                    # save epoch with best dev metric
+                    torch.save(model.state_dict(), args.save)

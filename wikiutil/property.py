@@ -4,7 +4,7 @@ from itertools import combinations
 from random import shuffle
 from copy import deepcopy
 from tqdm import tqdm
-import subprocess, re, os, random
+import subprocess, re, os, random, functools, pickle
 import numpy as np
 
 
@@ -208,14 +208,36 @@ def read_prop_file(filepath) -> List[str]:
     return result
 
 
-def read_subgraph_file(filepath) -> Dict[str, List[Tuple[str, str, str]]]:
+def read_subgraph_cache():
+    def wrapper(func):
+        @functools.wraps(func)
+        def new_func(filepath, *args, **kwargs):
+            cache_path = filepath + '.pickle'
+            if os.path.exists(cache_path):
+                print('load subgraph from cache ...')
+                with open(cache_path, 'rb') as fin:
+                    subgraph = pickle.load(fin)
+            else:
+                subgraph = func(filepath, *args, **kwargs)
+                print('cache subgraph ...')
+                with open(cache_path, 'wb') as fout:
+                    pickle.dump(subgraph, fout)
+            return subgraph
+        return new_func
+    return wrapper
+
+
+def read_subgraph_file(filepath, only_root=False) -> Dict[str, List[Tuple[str, str, str]]]:
     print('load subgraphs ...')
     result = {}
     with open(filepath, 'r') as fin:
         for l in tqdm(fin):
-            l = l.strip().split('\t')
+            l = l.strip().split('\t', 1)
             root = l[0]
-            adjs = [tuple(adj.split(' ')) for adj in l[1:]]
+            if not only_root:
+                adjs = [tuple(adj.split(' ')) for adj in l[1].split('\t')]
+            else:
+                adjs = []
             result[root] = adjs
     return result
 
@@ -409,7 +431,7 @@ def get_all_subtree(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]) \
 
 def get_is_ancestor(subtrees: List[PropertySubtree]):
     is_ancestor = set()
-    for subtree in tqdm(subtrees):
+    for subtree in subtrees:
         for child, ancestors in subtree.traverse(return_ancestors=True):
             for anc in ancestors:
                 is_ancestor.add((anc, child))

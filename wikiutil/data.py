@@ -327,7 +327,7 @@ class PointwiseDataset(PropertyDataset):
                  use_cache: bool = False,
                  filter_prop: set = None,
                  keep_one_per_prop: bool = False,
-                 neg_ratio: int = None,
+                 neg_ratio: int = 5,  # TODO: set this externally
                  manager: Manager = None,
                  use_pseudo_property: bool = False):
         super(PointwiseDataset, self).__init__(

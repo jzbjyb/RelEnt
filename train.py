@@ -9,10 +9,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler
-from multiprocessing import Manager
-from wikiutil.data import PointwiseDataset, NwayDataset
-from wikiutil.util import load_embedding, filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
-from wikiutil.metric import AnalogyEval, accuray
+from wikiutil.util import filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
+from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise
 from wikiutil.property import read_prop_file, read_subgraph_file
 from wikiutil.constant import AGG_NODE, AGG_PROP
 from analogy.ggnn import GatedGraphNeuralNetwork
@@ -104,7 +102,7 @@ def one_epoch(args, split, dataloader, optimizer, device, show_progress=True):
 
         loss_li.append(loss.item())
         if args.dataset_format == 'pointwise':
-            pred_li.extend([(pid1, pid2, logits[i].item())
+            pred_li.extend([(pid1, pid2, logits[i].item(), label[i].item())
                             for i, (pid1, pid2) in
                             enumerate(zip(batch[0]['meta']['pid1'], batch[0]['meta']['pid2']))])
         else:
@@ -141,8 +139,8 @@ if __name__ == '__main__':
         device = torch.device('cuda')
 
     # configs
-    method = 'ggnn'
-    lr = 0.001 if method == 'emb' else 0.0001
+    method = 'emb'
+    lr = 0.005 if method == 'emb' else 0.0001
     debug = False
     keep_one_per_prop = True if method == 'emb' else False
     use_cache = True
@@ -155,12 +153,18 @@ if __name__ == '__main__':
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
     get_dataset_filepath = lambda split, preped=False: os.path.join(
         args.dataset_dir, split + '.' + args.dataset_format + ('.{}.prep'.format(edge_type) if preped else ''))
+    if args.dataset_format == 'pointwise':
+        accuracy = accuracy_pointwise
+    elif args.dataset_format == 'nway':
+        accuracy = accuracy_nway
+    else:
+        raise NotImplementedError
 
     # load subgraph
     if args.preped:
         subgraph_dict = None
     else:
-        subgraph_dict = read_subgraph_file(args.subgraph_file)
+        subgraph_dict = read_subgraph_file(args.subgraph_file, only_root=method == 'emb')
 
     # filter emb and get all the properties used by dry run datasets
     if args.filter_emb:
@@ -246,7 +250,7 @@ if __name__ == '__main__':
     '''
 
     # train and test
-    show_progress = True
+    show_progress = method != 'emb'
     pat, best_dev_metric = 0, 0
     for epoch in range(300):
         # init performance
@@ -255,7 +259,7 @@ if __name__ == '__main__':
                                            device=device, show_progress=show_progress)
             print('init')
             #print(np.mean(dev_loss), dev_metric.eval(dev_pred))
-            print(np.mean(dev_loss), accuray(dev_pred))
+            print(np.mean(dev_loss), accuracy(dev_pred))
 
         # train, dev, test
         train_pred, train_loss = one_epoch(args, 'train', train_dataloader, optimizer,
@@ -266,7 +270,7 @@ if __name__ == '__main__':
                                          device=device, show_progress=show_progress)
 
         # evaluate
-        train_metric, dev_metric, test_metric = accuray(train_pred), accuray(dev_pred), accuray(test_pred)
+        train_metric, dev_metric, test_metric = accuracy(train_pred), accuracy(dev_pred), accuracy(test_pred)
         print('epoch {:4d}\ttr_loss: {:>.3f}\tdev_loss: {:>.3f}\tte_loss: {:>.3f}'.format(
             epoch + 1, np.mean(train_loss), np.mean(dev_loss), np.mean(test_loss)), end='')
         print('\t\ttr_acc: {:>.3f}\tdev_acc: {:>.3f}\ttest_acc: {:>.3f}'.format(

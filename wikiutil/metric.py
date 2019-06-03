@@ -5,7 +5,14 @@ from random import shuffle
 from operator import itemgetter
 import json
 from sklearn.metrics import precision_recall_curve, auc, average_precision_score
-from .property import read_subprop_file, get_is_sibling, get_all_subtree, get_is_parent
+from .property import read_subprop_file, get_is_sibling, get_all_subtree, get_is_parent, get_is_ancestor
+
+
+subprops = read_subprop_file('data/subprops.txt')
+subtrees, _ = get_all_subtree(subprops)
+is_sibling = get_is_sibling(subprops)
+is_parent = get_is_parent(subprops)
+is_ancestor = get_is_ancestor(subtrees)
 
 
 class AnalogyEval():
@@ -191,12 +198,12 @@ class AnalogyEval():
         return getattr(self, reduction + '_' + metric)(predictions)
 
 
-def accuray(predictions: List[Tuple[str, List, int]], method='macro'):
+def accuracy_nway(predictions: List[Tuple[str, List, int]], method='macro'):
     assert method in {'macro', 'micro'}
     pid2acc = defaultdict(lambda: [])
     corr, total = 0, 0
     for pid, logits, label in predictions:
-        c = int(np.argmax(logits) == label)
+        c = int(np.argmax(logits) == label)  # TODO: relation with multiple parents
         pid2acc[pid].append(c)
         total += 1
         corr += c
@@ -206,3 +213,29 @@ def accuray(predictions: List[Tuple[str, List, int]], method='macro'):
     elif method == 'micro':
         acc = corr / total
     return acc
+
+
+def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='macro'):
+    # TODO only have macro version
+    child2ancestor = defaultdict(lambda: defaultdict(list))
+    for parent, child, logits, label in predictions:
+        c = (logits >= 0.5 and label) or (logits < 0.5 and not label)
+        child2ancestor[child][parent].append(logits)
+    corr, total = 0, 0
+    eval_result = []
+    for child in child2ancestor:
+        c = 0  # 0 is correct
+        for parent in child2ancestor[child]:
+            pred = np.mean(child2ancestor[child][parent])  # TODO: this is ensemble
+            if (parent, child) in is_parent:  # TODO: relation with multiple parents
+                if pred < 0.5:
+                    c = 1  # not find parent
+                    break
+            elif (parent, child) not in is_ancestor:
+                if pred >= 0.5:
+                    c = 2  # find fake parent
+                    break
+        corr += c == 0
+        total += 1
+        eval_result.append(c)
+    return corr / total

@@ -1,5 +1,6 @@
 from typing import Dict, Tuple
 import functools, os
+import pickle
 from collections import OrderedDict, Callable
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -112,6 +113,29 @@ def read_emb_ids(filepath, filter=False) -> set:
     return result
 
 
+def load_embedding_cache():
+    def wrapper(func):
+        @functools.wraps(func)
+        def new_func(filepath, *args, **kwargs):
+            emb_cache = filepath + '.npz'
+            emb_id2ind_cache = filepath + '.id2ind'
+            if os.path.exists(emb_cache) and os.path.exists(emb_id2ind_cache):
+                print('load emb from cache ...')
+                with open(emb_id2ind_cache, 'rb') as fin:
+                    emb_id2ind = pickle.load(fin)
+                emb = np.load(emb_cache)
+            else:
+                emb_id2ind, emb = func(filepath, *args, **kwargs)
+                print('cache emb ...')
+                with open(emb_id2ind_cache, 'wb') as fout:
+                    pickle.dump(emb_id2ind, fout)
+                with open(emb_cache, 'wb') as fout:
+                    np.save(fout, emb)
+            return emb_id2ind, emb
+        return new_func
+    return wrapper
+
+
 def load_embedding(filepath, debug=False, emb_size=None) -> Tuple[Dict[str, int], np.ndarray]:
     print('load emb ...')
     id2ind = {}
@@ -130,6 +154,7 @@ def load_embedding(filepath, debug=False, emb_size=None) -> Tuple[Dict[str, int]
     return id2ind, np.array(emb, dtype=np.float32)
 
 
+@load_embedding_cache()
 def read_embeddings_from_text_file(filepath: str,
                                    debug: bool = False,
                                    emb_size: int = None) -> Tuple[Dict[str, int], np.ndarray]:

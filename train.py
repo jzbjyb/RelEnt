@@ -11,7 +11,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler
 from multiprocessing import Manager
 from wikiutil.data import PointwiseDataset, NwayDataset
-from wikiutil.util import load_embedding, filer_embedding, load_tsv_as_dict
+from wikiutil.util import load_embedding, filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
 from wikiutil.metric import AnalogyEval, accuray
 from wikiutil.property import read_prop_file, read_subgraph_file
 from wikiutil.constant import AGG_NODE, AGG_PROP
@@ -181,7 +181,8 @@ if __name__ == '__main__':
         exit(1)
 
     # load embedding
-    emb_id2ind, emb = load_embedding(args.emb_file, debug=debug, emb_size=200) if args.emb_file else (None, None)
+    emb_id2ind, emb = read_embeddings_from_text_file(args.emb_file, debug=debug, emb_size=200) \
+        if args.emb_file else (None, None)
     #properties_as_relations = {'P31', 'P21', 'P527', 'P17'}  # for debug
     properties_as_relations = load_tsv_as_dict(os.path.join(args.dataset_dir, 'pid2ind.tsv'), valuefunc=int)
     # add agg property and node

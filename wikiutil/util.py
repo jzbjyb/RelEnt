@@ -4,6 +4,7 @@ from collections import OrderedDict, Callable
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
+from allennlp.modules.token_embedders.embedding import EmbeddingsTextFile
 
 
 def load_tsv_as_dict(filepath, keyfunc=lambda x:x, valuefunc=lambda x:x):
@@ -123,6 +124,26 @@ def load_embedding(filepath, debug=False, emb_size=None) -> Tuple[Dict[str, int]
                 emb.append([0.1] * emb_size)
             else:
                 l = list(map(float, l[1].split('\t')))
+                if emb_size and len(l) != emb_size:
+                    raise ValueError('emb dim incorrect')
+                emb.append(l)
+    return id2ind, np.array(emb, dtype=np.float32)
+
+
+def read_embeddings_from_text_file(filepath: str,
+                                   debug: bool = False,
+                                   emb_size: int = None) -> Tuple[Dict[str, int], np.ndarray]:
+    print('load emb from {} ...'.format(filepath))
+    id2ind = {}
+    emb = []
+    with EmbeddingsTextFile(filepath) as embeddings_file:
+        for i, line in tqdm(enumerate(embeddings_file)):
+            token = line.split('\t', 1)[0]
+            id2ind[token] = i
+            if debug:
+                emb.append([0.1] * emb_size)
+            else:
+                l = np.asarray(line.rstrip().split('\t')[1:], dtype='float32')
                 if emb_size and len(l) != emb_size:
                     raise ValueError('emb dim incorrect')
                 emb.append(l)

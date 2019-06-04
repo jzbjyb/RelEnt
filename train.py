@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler
-from wikiutil.data import PointwiseDataset, NwayDataset
+from wikiutil.data import PointwiseDataset, NwayDataset, PointwisemergeDataset
 from wikiutil.util import filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
 from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise
 from wikiutil.property import read_prop_file, read_subgraph_file
@@ -102,13 +102,15 @@ def one_epoch(args, split, dataloader, optimizer, device, show_progress=True):
             optimizer.step()
 
         loss_li.append(loss.item())
-        if args.dataset_format == 'pointwise':
+        if args.dataset_format == 'pointwise' or args.dataset_format == 'pointwisemerge':
             pred_li.extend([(pid1, pid2, logits[i].item(), label[i].item())
                             for i, (pid1, pid2) in
                             enumerate(zip(batch[0]['meta']['pid1'], batch[0]['meta']['pid2']))])
-        else:
+        elif args.dataset_format == 'nway':
             pred_li.extend([(pid, logits[i].detach().cpu().numpy(), label[i].item())
                             for i, pid in enumerate(batch[0]['meta']['pid'])])
+        else:
+            raise NotImplementedError
 
     return pred_li, loss_li
 
@@ -116,7 +118,7 @@ def one_epoch(args, split, dataloader, optimizer, device, show_progress=True):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('train analogy model')
     parser.add_argument('--dataset_dir', type=str, required=True, help='dataset dir')
-    parser.add_argument('--dataset_format', type=str, choices=['pointwise', 'nway'],
+    parser.add_argument('--dataset_format', type=str, choices=['pointwise', 'nway', 'pointwisemerge'],
                         default='pointwise', help='dataset format')
     parser.add_argument('--subgraph_file', type=str, required=True, help='entity subgraph file')
     parser.add_argument('--subprop_file', type=str, required=True, help='subprop file')
@@ -131,7 +133,9 @@ if __name__ == '__main__':
     parser.add_argument('--num_workers', type=int, default=0, help='number of workers used to load data')
 
     parser.add_argument('--method', type=str, default='emb', help='which model to use')
-    parser.add_argument('--batch_size', type=int, default=32, help='batch_size')
+    parser.add_argument('--batch_size', type=int, default=32, help='batch size')
+    parser.add_argument('--lr', type=float, default=None, help='learning rate')
+    parser.add_argument('--edge_type', type=str, default='only_property', help='how to form the graph')
 
     args = parser.parse_args()
 
@@ -149,15 +153,17 @@ if __name__ == '__main__':
     # configs
     method = args.method
     lr = 0.005 if method == 'emb' else 0.0001
+    if args.lr is not None:
+        lr = args.lr
     debug = False
     keep_one_per_prop = True if method == 'emb' else False
     use_cache = False
-    use_pseudo_property = True
-    edge_type = 'one'
+    use_pseudo_property = False
+    edge_type = args.edge_type
     num_workers = args.num_workers
     batch_size = args.batch_size
-    num_class_dict = {'nway': 16, 'pointwise': 1}
-    num_graph_dict = {'nway': 1, 'pointwise': 2}
+    num_class_dict = {'nway': 16, 'pointwise': 1, 'pointwisemerge': 1}
+    num_graph_dict = {'nway': 1, 'pointwise': 2, 'pointwisemerge': 1}
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
     get_dataset_filepath = lambda split, preped=False: os.path.join(
         args.dataset_dir, split + '.' + args.dataset_format + ('.{}.prep'.format(edge_type) if preped else ''))
@@ -166,7 +172,7 @@ if __name__ == '__main__':
     elif args.dataset_format == 'nway':
         accuracy = accuracy_nway
     else:
-        raise NotImplementedError
+        accuracy = accuracy_pointwise
 
     # load subgraph
     if args.preped:
@@ -202,7 +208,14 @@ if __name__ == '__main__':
     emb_id2ind[AGG_NODE] = len(emb_id2ind)
     emb = np.concatenate([emb, np.zeros((1, emb.shape[1]), dtype=np.float32)], axis=0)
     # set num_edge_types
-    num_edge_types = 1 if edge_type == 'one' else len(properties_as_relations)
+    if edge_type == 'one' or edge_type == 'only_property':
+        num_edge_types = 1
+    elif edge_type == 'property':
+        num_edge_types = len(properties_as_relations)
+    else:
+        raise NotImplementedError
+    if args.dataset_format == 'pointwisemerge':
+        num_edge_types += 1
 
     # load data
     dataset_params = {

@@ -11,7 +11,7 @@ set -e
 dataset_dir=data/analogy_dataset/by_entail_622_subgraph10_ancestor5_sample100_maxoccperprop10k_population
 subgraph_file=data/subgraph/property_occurrence_all_shuf_top100k.subgraph
 #subgraph_file=data/property_occurrence_subtree.subgraph
-data_format=pointwise
+data_format=pointwisemerge
 
 python train.py \
     --dataset_dir ${dataset_dir} \
@@ -20,8 +20,9 @@ python train.py \
     --subprop_file data/subprops.txt \
     --emb_file ${dataset_dir}/emb.txt.gz \
     --patience 40 \
-    --save model/ggnn.bin \
-    --preped \
+    --save model/ggnn_merge.bin \
     --num_workers 4 \
     --method ggnn \
-    --batch_size 32
+    --batch_size 32 \
+    --edge_type one \
+    --preped

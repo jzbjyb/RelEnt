@@ -41,20 +41,27 @@ class PropertySubgraph():
                  padding_ind: int = 0,  # TODO: add padding index
                  edge_type: str = 'one',
                  use_pseudo_property: bool = False,
-                 agg_property: str = AGG_PROP):
+                 agg_property: str = AGG_PROP,
+                 merge: bool = False,
+                 property_id2: str = None,
+                 occurrences2: Tuple[Tuple[str, str]] = None):
         if not property_id:
             return
         self.pid = property_id
+        self.pid2 = property_id2
         self.occurrences = occurrences
+        self.occurrences2 = occurrences2
         self.subgraph_dict = subgraph_dict
         self.emb_id2ind = emb_id2ind
         self.padding_ind = padding_ind
-        assert edge_type in {'one', 'property'}
+        assert edge_type in {'one', 'property', 'only_property'}
         # 'one': properties are treated as nodes and only use a single type of edges
-        # 'relation': properties are treated as edges
+        # 'property': properties are treated as edges
+        # 'only_keep_properties': only keep properties in the subgraph
         self.edge_type = edge_type
         self.use_pseudo_property = use_pseudo_property
         self.agg_property = agg_property  # a special property used to aggregate information
+        self.merge = merge  # merge subgraphs of two properties
         self.id2ind, self.ind2adjs, self.emb_ind, self.prop_ind = self._to_gnn_input()
         self.ids = set([k.split('-')[0] for k in self.id2ind])  # all the ids of entities and properties involved
 
@@ -72,7 +79,12 @@ class PropertySubgraph():
         '''
         empty_sg = cls()
         pid, ind2adjs, emb_ind, prop_ind = format_str.split('\t')
-        empty_sg.pid = pid
+        if pid.find('|') >= 0:
+            pid = pid.split('|')
+            empty_sg.pid = pid[0]
+            empty_sg.pid2 = pid[1]
+        else:
+            empty_sg.pid = pid
         empty_sg.ind2adjs = json.loads(ind2adjs)
         empty_sg.emb_ind = np.array([i for i in map(int, emb_ind.split(','))])
         empty_sg.prop_ind = int(prop_ind)
@@ -84,8 +96,11 @@ class PropertySubgraph():
         '''
         dump necessary properties to a formatted string.
         '''
+        pid = self.pid
+        if self.pid2 is not None:
+            pid += '|' + self.pid2
         return '{pid}\t{ind2adjs}\t{emb_ind}\t{prop_ind}'.format(
-            pid=self.pid,
+            pid=pid,
             ind2adjs=json.dumps(self.ind2adjs),
             emb_ind=','.join(str(i) for i in self.emb_ind),
             prop_ind=self.prop_ind)
@@ -105,6 +120,18 @@ class PropertySubgraph():
         #pid2count[uniq_pid] += 1
         #uniq_pid = '{}-{}'.format(pid, pid2count[uniq_pid])
         return uniq_pid
+
+
+    def build_identical_link(self,
+                             id: str,
+                             old_set: set,
+                             id2ind: Dict[str, int],
+                             adjs: List[Tuple[int, int]]):
+        if id in old_set:
+            nid = id + '-2'
+            adjs.append((id2ind[nid], id2ind[id]))
+            return nid
+        return id
 
 
     def _to_gnn_input(self):
@@ -144,6 +171,31 @@ class PropertySubgraph():
                 except KeyError:
                     raise DataPrepError
 
+            # merge
+            if self.merge:
+                old_set = set(id2ind.keys())
+                ide_adjs = []
+                pid2 = self.build_identical_link(self.pid2, old_set, id2ind, ide_adjs)
+                for i, (hid, tid) in enumerate(self.occurrences2):
+                    if self.use_pseudo_property:
+                        raise NotImplementedError
+                    _hid = self.build_identical_link(hid, old_set, id2ind, ide_adjs)
+                    _tid = self.build_identical_link(tid, old_set, id2ind, ide_adjs)
+                    adjs.append((id2ind[_hid], id2ind[pid2]))
+                    adjs.append((id2ind[pid2], id2ind[_tid]))
+                    try:
+                        for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
+                            for e1, pid, e2 in two_side:
+                                if self.use_pseudo_property:
+                                    raise NotImplementedError
+                                pid = self.build_identical_link(pid, old_set, id2ind, ide_adjs)
+                                e1 = self.build_identical_link(e1, old_set, id2ind, ide_adjs)
+                                e2 = self.build_identical_link(e2, old_set, id2ind, ide_adjs)
+                                adjs.append((id2ind[e1], id2ind[pid]))
+                                adjs.append((id2ind[pid], id2ind[e2]))
+                    except KeyError:
+                        raise DataPrepError
+
             # remove duplicate item in adjs
             adjs = list(set(adjs))
 
@@ -157,7 +209,55 @@ class PropertySubgraph():
                 # when id2ind does not exist, use padding_ind
                 emb_ind = np.array([self.padding_ind] * len(id2ind))
 
-            return id2ind, {'one': adjs}, emb_ind, 0
+            if self.merge:
+                return id2ind, {'one': adjs, 'two': ide_adjs}, emb_ind, 0
+            else:
+                return id2ind, {'one': adjs}, emb_ind, 0
+
+        elif self.edge_type == 'only_property':
+            # build adj list
+            id2ind = DefaultOrderedDict(lambda: len(id2ind))  # proerty id to index mapping
+            _ = id2ind[self.pid]  # make sure that the central property is alway indexed as 0
+            adjs = []
+            for i, (hid, tid) in enumerate(self.occurrences):
+                try:
+                    for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
+                        for e1, pid, e2 in two_side:
+                            adjs.append((id2ind[pid], id2ind[self.pid]))
+                except KeyError:
+                    raise DataPrepError
+
+            # merge
+            if self.merge:
+                old_set = set(id2ind.keys())
+                ide_adjs = []
+                pid2 = self.build_identical_link(self.pid2, old_set, id2ind, ide_adjs)
+                for i, (hid, tid) in enumerate(self.occurrences2):
+                    try:
+                        for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
+                            for e1, pid, e2 in two_side:
+                                pid = self.build_identical_link(pid, old_set, id2ind, ide_adjs)
+                                adjs.append((id2ind[pid], id2ind[pid2]))
+                    except KeyError:
+                        raise DataPrepError
+
+            # remove duplicate item in adjs
+            adjs = list(set(adjs))
+
+            # build emb index
+            if self.emb_id2ind:
+                try:
+                    emb_ind = np.array([self.emb_id2ind[k.split('-')[0]] for k, v in id2ind.items()])
+                except KeyError:
+                    raise DataPrepError
+            else:
+                # when id2ind does not exist, use padding_ind
+                emb_ind = np.array([self.padding_ind] * len(id2ind))
+
+            if self.merge:
+                return id2ind, {'one': adjs, 'two': ide_adjs}, emb_ind, 0
+            else:
+                return id2ind, {'one': adjs}, emb_ind, 0
 
         elif self.edge_type == 'property':
             # build adj list
@@ -211,8 +311,9 @@ class PropertySubgraph():
             new_emb_ind.append(g.emb_ind)
             new_prop_ind.append(acc + g.prop_ind)
             acc += g.size
-        if edge_type == 'one':
-            adjs_li = [new_ind2adjs[pid] for pid in new_ind2adjs]
+        if edge_type == 'one' or edge_type == 'only_property':
+            # could have multiple keys, must ensure the order
+            adjs_li = [new_ind2adjs[pid] for pid in sorted(new_ind2adjs.keys())]
         elif edge_type == 'property':
             adjs_li = [new_ind2adjs[pid] for pid in pid2ind]  # use OrderedDict to get a list of adjs
         else:
@@ -294,6 +395,22 @@ class PropertyDataset(Dataset):
             self.padding_ind, self.edge_type, self.use_pseudo_property)
         if self.use_cache:
             self._cache[property_occ] = sg
+        return sg
+
+
+    def create_pair_subgraph(self,
+                             property_occ1: Tuple[str, Tuple[Tuple[str, str]]],
+                             property_occ2: Tuple[str, Tuple[Tuple[str, str]]]) -> PropertySubgraph:
+        if self.use_cache and (property_occ1, property_occ2) in self._cache:
+            return self._cache[(property_occ1, property_occ2)]
+        pid1, occs1 = property_occ1
+        pid2, occs2 = property_occ2
+        sg = PropertySubgraph(
+            pid1, occs1, self.subgraph_dict, self.emb_id2ind,
+            self.padding_ind, self.edge_type, self.use_pseudo_property,
+            merge=True, property_id2=pid2, occurrences2=occs2)
+        if self.use_cache:
+            self._cache[(property_occ1, property_occ2)] = sg
         return sg
 
 
@@ -382,6 +499,39 @@ class PointwiseDataset(PropertyDataset):
             emb_ind12.append(emb_ind)
             prop_ind12.append(prop_ind)
         return {'adj': adjs12, 'emb_ind': emb_ind12, 'prop_ind': prop_ind12,
+                'meta': {'pid1': pid1s, 'pid2': pid2s}}, \
+               torch.LongTensor(labels)
+
+
+class PointwisemergeDataset(PointwiseDataset):
+    def __init__(self, *args, **kwargs):
+        super(PointwisemergeDataset, self).__init__(*args, **kwargs)
+
+
+    def __getitem__(self, idx):
+        if self.use_prep:
+            return load_preprocessed_line(self.inst_list[idx], edge_type=self.edge_type)
+        else:
+            p1o, p2o, label = self.inst_list[idx]
+            return self.create_pair_subgraph(p1o, p2o), label
+
+
+    def getids(self, getitem_result):
+        g, _ = getitem_result
+        return g.ids
+
+
+    def collate_fn(self, insts: List):
+        packed_sg, labels = zip(*insts)
+        pid1s = [sg.pid for sg in packed_sg]
+        pid2s = [sg.pid2 for sg in packed_sg]
+        adjs12, emb_ind12, prop_ind12 = [], [], []
+
+        adjs_li, emb_ind, prop_ind = PropertySubgraph.pack_graphs(packed_sg, self.pid2ind)
+        adjs_li = [AdjacencyList(node_num=len(adjs), adj_list=adjs) for adjs in adjs_li]
+        emb_ind = torch.LongTensor(emb_ind)
+        prop_ind = torch.LongTensor(prop_ind)
+        return {'adj': [adjs_li], 'emb_ind': [emb_ind], 'prop_ind': [prop_ind],
                 'meta': {'pid1': pid1s, 'pid2': pid2s}}, \
                torch.LongTensor(labels)
 

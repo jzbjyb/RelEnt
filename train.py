@@ -27,7 +27,8 @@ class Model(nn.Module):
                  emb: np.ndarray = None,
                  hidden_size: int = 64,
                  method: str = 'ggnn',
-                 num_edge_types: int = 1):
+                 num_edge_types: int = 1,
+                 layer_timesteps: List[int] = [3, 3]):
         super(Model, self).__init__()
         assert method in {'ggnn', 'emb'}
         self.method = method
@@ -43,7 +44,7 @@ class Model(nn.Module):
         # get model
         self.emb_proj = nn.Linear(emb_size, hidden_size)
         self.gnn = GatedGraphNeuralNetwork(hidden_size=hidden_size, num_edge_types=num_edge_types,
-                                           layer_timesteps=[3, 3], residual_connections={})
+                                           layer_timesteps=layer_timesteps, residual_connections={})
         self.cla = nn.Sequential(
             nn.Dropout(p=0.2),
             nn.Linear(hidden_size * num_graph, hidden_size),
@@ -166,6 +167,7 @@ if __name__ == '__main__':
     batch_size = args.batch_size
     num_class_dict = {'nway': 16, 'pointwise': 1, 'pointwisemerge': 1}
     num_graph_dict = {'nway': 1, 'pointwise': 2, 'pointwisemerge': 1}
+    layer_timesteps = [1]
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
     get_dataset_filepath = lambda split, preped=False: os.path.join(
         args.dataset_dir, split + '.' + args.dataset_format + ('.{}.prep'.format(edge_type) if preped else ''))
@@ -216,6 +218,8 @@ if __name__ == '__main__':
         num_edge_types = 2  # head and tail
     elif edge_type == 'property':
         num_edge_types = len(properties_as_relations)
+    elif edge_type == 'bow':
+        num_edge_types = 1
     else:
         raise NotImplementedError
     if args.dataset_format == 'pointwisemerge':
@@ -229,7 +233,8 @@ if __name__ == '__main__':
         'edge_type': edge_type,
         'keep_one_per_prop': keep_one_per_prop,
         'use_cache': use_cache,
-        'use_pseudo_property': use_pseudo_property
+        'use_pseudo_property': use_pseudo_property,
+        'use_top': True,  # TODO: set using external params
     }
     get_dataloader = lambda ds, shuffle, sampler=None: \
         DataLoader(ds, batch_size=batch_size, shuffle=shuffle, sampler=sampler,
@@ -262,7 +267,8 @@ if __name__ == '__main__':
                   emb=emb,
                   hidden_size=64,
                   method=method,
-                  num_edge_types=num_edge_types)
+                  num_edge_types=num_edge_types,
+                  layer_timesteps=layer_timesteps)
     if args.load:
         print('load model from {}'.format(args.load))
         model.load_state_dict(torch.load(args.load))

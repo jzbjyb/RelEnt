@@ -488,6 +488,10 @@ class PropertyOccurrence():
                 num_long_tail_prop, min_occ_per_prop))
         if populate_method is not None:
             print('populate properties recursively')
+            # TODO: if parent property is the union of child property, and subgraph is unmodified,
+            #   the model can cheat.
+            # TODO: An idea case is that when building train subgraph, dev and test
+            #   properties are removed.
             new_pid2occs: Dict[str, set] = {}
             for subtree in tqdm(subtrees):
                 PropertyOccurrence.recursive_complete(

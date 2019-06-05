@@ -218,31 +218,35 @@ class PropertySubgraph():
             # build adj list
             id2ind = DefaultOrderedDict(lambda: len(id2ind))  # proerty id to index mapping
             _ = id2ind[self.pid]  # make sure that the central property is alway indexed as 0
-            adjs = []
+            adjs_dict: Dict[str, List] = {'head': [], 'tail': []}
             for i, (hid, tid) in enumerate(self.occurrences):
                 try:
-                    for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
-                        for e1, pid, e2 in two_side:
-                            adjs.append((id2ind[pid], id2ind[self.pid]))
+                    for e1, pid, e2 in self.subgraph_dict[hid]:
+                        # TODO: better way to avoid treating
+                        if pid != self.pid and (not self.pid2 or pid != self.pid2):
+                            adjs_dict['head'].append((id2ind[pid], id2ind[self.pid]))
+                    for e1, pid, e2 in self.subgraph_dict[tid]:
+                        if pid != self.pid and (not self.pid2 or pid != self.pid2):
+                            adjs_dict['tail'].append((id2ind[pid], id2ind[self.pid]))
                 except KeyError:
                     raise DataPrepError
 
-            # merge
             if self.merge:
-                old_set = set(id2ind.keys())
-                ide_adjs = []
-                pid2 = self.build_identical_link(self.pid2, old_set, id2ind, ide_adjs)
+                if self.pid2 in id2ind:
+                    raise Exception('pid2 is included, might be cheating')
+                adjs_dict['pair'] = [(id2ind[self.pid2], id2ind[self.pid])]
                 for i, (hid, tid) in enumerate(self.occurrences2):
                     try:
-                        for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
-                            for e1, pid, e2 in two_side:
-                                pid = self.build_identical_link(pid, old_set, id2ind, ide_adjs)
-                                adjs.append((id2ind[pid], id2ind[pid2]))
+                        for e1, pid, e2 in self.subgraph_dict[hid]:
+                            if pid != self.pid2:
+                                adjs_dict['head'].append((id2ind[pid], id2ind[self.pid2]))
+                        for e1, pid, e2 in self.subgraph_dict[tid]:
+                            if pid != self.pid2:
+                                adjs_dict['tail'].append((id2ind[pid], id2ind[self.pid2]))
                     except KeyError:
                         raise DataPrepError
 
-            # remove duplicate item in adjs
-            adjs = list(set(adjs))
+            adjs_dict = dict((k, list(set(v))) for k, v in adjs_dict.items())
 
             # build emb index
             if self.emb_id2ind:
@@ -254,10 +258,7 @@ class PropertySubgraph():
                 # when id2ind does not exist, use padding_ind
                 emb_ind = np.array([self.padding_ind] * len(id2ind))
 
-            if self.merge:
-                return id2ind, {'one': adjs, 'two': ide_adjs}, emb_ind, 0
-            else:
-                return id2ind, {'one': adjs}, emb_ind, 0
+            return id2ind, adjs_dict, emb_ind, 0
 
         elif self.edge_type == 'property':
             # build adj list

@@ -131,6 +131,7 @@ if __name__ == '__main__':
     parser.add_argument('--save', type=str, default=None, help='path to save the model')
     parser.add_argument('--load', type=str, default=None, help='path to load the model from')
     parser.add_argument('--num_workers', type=int, default=0, help='number of workers used to load data')
+    parser.add_argument('--show_progress', action='store_true', help='whether to show training progress')
 
     parser.add_argument('--method', type=str, default='emb', help='which model to use')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
@@ -159,6 +160,7 @@ if __name__ == '__main__':
     keep_one_per_prop = True if method == 'emb' else False
     use_cache = False
     use_pseudo_property = False
+    show_progress = args.show_progress
     edge_type = args.edge_type
     num_workers = args.num_workers
     batch_size = args.batch_size
@@ -208,8 +210,10 @@ if __name__ == '__main__':
     emb_id2ind[AGG_NODE] = len(emb_id2ind)
     emb = np.concatenate([emb, np.zeros((1, emb.shape[1]), dtype=np.float32)], axis=0)
     # set num_edge_types
-    if edge_type == 'one' or edge_type == 'only_property':
+    if edge_type == 'one':
         num_edge_types = 1
+    elif edge_type == 'only_property':
+        num_edge_types = 2  # head and tail
     elif edge_type == 'property':
         num_edge_types = len(properties_as_relations)
     else:
@@ -274,7 +278,6 @@ if __name__ == '__main__':
     '''
 
     # train and test
-    show_progress = method != 'emb'
     pat, best_dev_metric = 0, 0
     for epoch in range(300):
         # init performance

@@ -169,16 +169,23 @@ class PropertySubgraph():
                 #  appear multiple times in the subgraph
                 # TODO: (3) it might be better to treat the links from property to entity and
                 #  the links from entity to property differently
+                # TODO: (4) is use_top, some occurrence might not have any nodes in the subgraph
                 if self.use_pseudo_property:  # use a pseudo prop and link it to the real one
                     ppid = self.get_pseudo_property_id(self.pid, hid, tid, pid2count)
                     adjs.append((id2ind[ppid], id2ind[self.pid]))
                 else:
                     ppid = self.pid
-                adjs.append((id2ind[hid], id2ind[ppid]))
-                adjs.append((id2ind[ppid], id2ind[tid]))
+                if self.is_pass_check(hid):
+                    adjs.append((id2ind[hid], id2ind[ppid]))
+                if self.is_pass_check(tid):
+                    adjs.append((id2ind[ppid], id2ind[tid]))
                 try:
                     for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
                         for e1, pid, e2 in two_side:
+                            if not self.is_pass_check(e1) or \
+                                    not self.is_pass_check(pid) or \
+                                    not self.is_pass_check(e2):
+                                continue
                             if self.use_pseudo_property:  # use a pseudo prop and link it to the real one
                                 ppid = self.get_pseudo_property_id(pid, e1, e2, pid2count)
                                 adjs.append((id2ind[ppid], id2ind[pid]))
@@ -197,15 +204,21 @@ class PropertySubgraph():
                 for i, (hid, tid) in enumerate(self.occurrences2):
                     if self.use_pseudo_property:
                         raise NotImplementedError
-                    _hid = self.build_identical_link(hid, old_set, id2ind, ide_adjs)
-                    _tid = self.build_identical_link(tid, old_set, id2ind, ide_adjs)
-                    adjs.append((id2ind[_hid], id2ind[pid2]))
-                    adjs.append((id2ind[pid2], id2ind[_tid]))
+                    if self.is_pass_check(hid):
+                        _hid = self.build_identical_link(hid, old_set, id2ind, ide_adjs)
+                        adjs.append((id2ind[_hid], id2ind[pid2]))
+                    if self.is_pass_check(tid):
+                        _tid = self.build_identical_link(tid, old_set, id2ind, ide_adjs)
+                        adjs.append((id2ind[pid2], id2ind[_tid]))
                     try:
                         for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
                             for e1, pid, e2 in two_side:
                                 if self.use_pseudo_property:
                                     raise NotImplementedError
+                                if not self.is_pass_check(e1) or \
+                                        not self.is_pass_check(pid) or \
+                                        not self.is_pass_check(e2):
+                                    continue
                                 pid = self.build_identical_link(pid, old_set, id2ind, ide_adjs)
                                 e1 = self.build_identical_link(e1, old_set, id2ind, ide_adjs)
                                 e2 = self.build_identical_link(e2, old_set, id2ind, ide_adjs)

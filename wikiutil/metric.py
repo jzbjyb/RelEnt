@@ -237,5 +237,5 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
                     break
         corr += c == 0
         total += 1
-        eval_result.append(c)
+        eval_result.append((child, c))
     return corr / total

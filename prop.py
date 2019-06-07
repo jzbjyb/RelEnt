@@ -232,12 +232,37 @@ def prop_occur_ana(args, check_existence=False, show_detail=False):
             fout.write('{}\t{}\n'.format(anc, overlap))
 
 
+def wikidata_populate(args):
+    subprop_file, triple_file = args.inp.split(':')
+    subprops = read_subprop_file(subprop_file)
+    subtrees, isolate = get_all_subtree(subprops)
+    child2ancestors = defaultdict(set)
+    for subtree in subtrees:
+        for c, ancs in subtree.traverse(return_ancestors=True):
+            child2ancestors[c] |= set(ancs)
+    print('average number of ancestors {}'.format(np.mean([len(child2ancestors[c]) for c in child2ancestors])))
+    hash_set = set()
+    with open(triple_file, 'r') as fin, open(args.out, 'w') as fout:
+        for l in tqdm(fin, total=270306417):
+            s, p, o = l.strip().split('\t')
+            ps = set()
+            if p in child2ancestors:
+                ps = child2ancestors[p]
+            ps.add(p)
+            for p in ps:
+                st = s + '\t' + p + '\t' + o
+                if st not in hash_set:
+                    fout.write(st + '\n')
+                    hash_set.add(st)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
                         choices=['subprop', 'build_tree', 'prop_occur_only',
                                  'prop_occur', 'prop_occur_all', 'prop_entities',
-                                 'hiro_to_subgraph', 'prop_occur_ana'], required=True)
+                                 'hiro_to_subgraph', 'prop_occur_ana',
+                                 'wikidata_populate'], required=True)
     parser.add_argument('--inp', type=str, required=True)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -273,3 +298,6 @@ if __name__ == '__main__':
     elif args.task == 'prop_occur_ana':
         # check entity-level overlap between parent and children properties
         prop_occur_ana(args, check_existence=False, show_detail=False)
+    elif args.task == 'wikidata_populate':
+        # populate wikidata by assuming all the parents properties holds for a triple
+        wikidata_populate(args)

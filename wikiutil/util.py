@@ -166,11 +166,14 @@ def load_embedding(filepath, debug=False, emb_size=None) -> Tuple[Dict[str, int]
 @load_embedding_cache()
 def read_embeddings_from_text_file(filepath: str,
                                    debug: bool = False,
-                                   emb_size: int = None) -> Tuple[Dict[str, int], np.ndarray]:
+                                   emb_size: int = None,
+                                   first_line: bool = False) -> Tuple[Dict[str, int], np.ndarray]:
     print('load emb from {} ...'.format(filepath))
     id2ind = {}
     emb = []
     with EmbeddingsTextFile(filepath) as embeddings_file:
+        if first_line:
+            embeddings_file.readline()
         for i, line in tqdm(enumerate(embeddings_file)):
             token = line.split('\t', 1)[0]
             id2ind[token] = i

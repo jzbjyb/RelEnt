@@ -250,7 +250,7 @@ def wikidata_populate(args):
                 ps = child2ancestors[p]
             ps.add(p)
             for p in ps:
-                st = s + '\t' + p + '\t' + o
+                st = '\t'.join([s, p, o])
                 if st not in hash_set:
                     fout.write(st + '\n')
                     hash_set.add(st)

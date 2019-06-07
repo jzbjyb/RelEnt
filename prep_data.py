@@ -4,13 +4,14 @@
 from typing import Dict, Tuple
 from collections import defaultdict
 from random import shuffle
+from operator import itemgetter
 import argparse, os, random, time
 from itertools import combinations, product
 from tqdm import tqdm
 import numpy as np
 from wikiutil.property import read_subprop_file, get_all_subtree, \
     get_is_sibling, read_subgraph_file, get_is_parent, PropertyOccurrence, get_is_ancestor
-from wikiutil.util import read_emb_ids, save_emb_ids, DefaultOrderedDict
+from wikiutil.util import read_emb_ids, save_emb_ids, DefaultOrderedDict, load_tsv_as_list
 
 
 if __name__ == '__main__':
@@ -37,6 +38,8 @@ if __name__ == '__main__':
                         help='whether dev and test contain training properties')
     parser.add_argument('--num_sample', type=int, default=10000,
                         help='number of pairs to sample/sample for each property pair/property')
+    parser.add_argument('--load_split', action='store_true',
+                        help='directly load train/dev/test and parent (if any) properties from out_dir')
     args = parser.parse_args()
 
     random.seed(2019)
@@ -73,12 +76,13 @@ if __name__ == '__main__':
                                          populate_method='combine_child',
                                          subtrees=subtrees)
     else:
+        # min_occ_per_prop is not used because some parent property (e.g., P3342: significant person)
+        # is unexpectedly small, and obviously we don't want to loss any parent properties.
         poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
                                          subgraph_dict=subgraph_dict,
                                          emb_set=emb_set,
                                          max_occ_per_prop=args.max_occ_per_prop,
-                                         num_occ_per_subgraph=args.num_occ_per_subgraph,
-                                         min_occ_per_prop=1000)
+                                         num_occ_per_subgraph=args.num_occ_per_subgraph)
 
     print('{} out of {} property pass existence check'.format(len(poccs.pids), len(all_propids)))
     all_propids &= set(poccs.pids)
@@ -123,18 +127,25 @@ if __name__ == '__main__':
 
     elif args.method == 'by_entail' or args.method == 'by_entail-n_way':
         # split each tir in a subtree into train/dev/test by viewing parent property as label
-        parent_prop, train_prop, dev_prop, test_prop = [], [], [], []
-        for subtree in subtrees:
-            for parent, train_p, dev_p, test_p in subtree.split_within(
-                    tr, dev, te, return_parent=True, filter_set=all_propids):
-                if parent in all_propids:
-                    parent_prop.append(parent)
-                    train_prop.extend(train_p)
-                    dev_prop.extend(dev_p)
-                    test_prop.extend(test_p)
-        # remove duplicates in parent properties, which will be used as labels
-        parent_prop = list(set(parent_prop))
-        print('totoall {} parent properties (labels)'.format(len(parent_prop)))
+        if args.load_split:
+            print('load existing splits ...')
+            parent_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.out_dir, 'label2ind.txt'))))
+            train_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.out_dir, 'train.prop'))))
+            dev_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.out_dir, 'dev.prop'))))
+            test_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.out_dir, 'test.prop'))))
+        else:
+            parent_prop, train_prop, dev_prop, test_prop = [], [], [], []
+            for subtree in subtrees:
+                for parent, train_p, dev_p, test_p in subtree.split_within(
+                        tr, dev, te, return_parent=True, filter_set=all_propids):
+                    if parent in all_propids:
+                        parent_prop.append(parent)
+                        train_prop.extend(train_p)
+                        dev_prop.extend(dev_p)
+                        test_prop.extend(test_p)
+            # remove duplicates in parent properties, which will be used as labels
+            parent_prop = list(set(parent_prop))
+        print('totally {} parent properties (labels)'.format(len(parent_prop)))
 
     # remove duplicates and avoid overlap
     test_prop = list(set(test_prop))
@@ -226,6 +237,13 @@ if __name__ == '__main__':
                 fout.write(st.print(final_prop_split) + '\n\n')
 
     if args.method in {'by_entail-n_way'}:
+        # save parent properties (required because these are classification labels)
         with open(os.path.join(args.out_dir, 'label2ind.txt'), 'w') as fout:
             for label, ind in label2id.items():
                 fout.write('{}\t{}\n'.format(label, ind))
+
+    elif args.method in {'by_entail'}:
+        # save parent properties (optional)
+        with open(os.path.join(args.out_dir, 'label2ind.txt'), 'w') as fout:
+            for ind, prop in enumerate(parent_prop):
+                fout.write('{}\t{}\n'.format(prop, ind))

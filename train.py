@@ -8,6 +8,7 @@ from collections import defaultdict
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, RandomSampler
 from wikiutil.data import PointwiseDataset, NwayDataset, PointwisemergeDataset
 from wikiutil.util import filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
@@ -30,7 +31,7 @@ class Model(nn.Module):
                  num_edge_types: int = 1,
                  layer_timesteps: List[int] = [3, 3]):
         super(Model, self).__init__()
-        assert method in {'ggnn', 'emb'}
+        assert method in {'ggnn', 'emb', 'cosine'}
         self.method = method
         self.num_class = num_class
         self.num_graph = num_graph
@@ -45,12 +46,14 @@ class Model(nn.Module):
         self.emb_proj = nn.Linear(emb_size, hidden_size)
         self.gnn = GatedGraphNeuralNetwork(hidden_size=hidden_size, num_edge_types=num_edge_types,
                                            layer_timesteps=layer_timesteps, residual_connections={})
+        self.cosine_cla = nn.Linear(1, 1)
+
         self.cla = nn.Sequential(
-            nn.Dropout(p=0.2),
-            nn.Linear(hidden_size * num_graph, hidden_size),
+            nn.Dropout(p=0.0),
+            nn.Linear(hidden_size * num_graph, 16),
             nn.ReLU(),
-            nn.Dropout(p=0.2),
-            nn.Linear(hidden_size, num_class)
+            nn.Dropout(p=0.0),
+            nn.Linear(16, num_class)
         )
 
 
@@ -58,7 +61,9 @@ class Model(nn.Module):
         ge_list = []
         for i in range(self.num_graph):
             # get representation
-            ge = self.emb_proj(self.emb(data['emb_ind'][i]))
+            ge = self.emb(data['emb_ind'][i])
+            if self.method != 'cosine':
+                ge = self.emb_proj(ge)
             if self.method == 'ggnn':
                 gnn = self.gnn.compute_node_representations(
                     initial_node_representation=ge, adjacency_lists=data['adj'][i])
@@ -70,15 +75,19 @@ class Model(nn.Module):
             ge = torch.index_select(ge, 0, data['prop_ind'][i])
             ge_list.append(ge)
         # match
-        ge = torch.cat(ge_list, -1)
+        if self.method == 'cosine':
+            ge = self.cosine_cla(F.cosine_similarity(ge_list[0], ge_list[1]).unsqueeze(-1))
+        else:
+            ge = torch.cat(ge_list, -1)
+            ge = self.cla(ge)
         if self.num_class == 1:
             # binary classification loss
-            logits = torch.sigmoid(self.cla(ge))
+            logits = torch.sigmoid(ge)
             labels = labels.float()
             loss = nn.BCELoss()(logits.squeeze(), labels)
         else:
             # cross-entropy loss
-            logits = self.cla(ge)
+            logits = ge
             loss = nn.CrossEntropyLoss()(logits, labels)
         return logits, loss
 
@@ -97,7 +106,7 @@ def one_epoch(args, split, dataloader, optimizer, device, show_progress=True):
         label = label.to(device)
         logits, loss = model(batch_dict, label)
 
-        if split == 'train':
+        if split == 'train' and loss.requires_grad is True:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -154,11 +163,11 @@ if __name__ == '__main__':
 
     # configs
     method = args.method
-    lr = 0.005 if method == 'emb' else 0.0001
+    lr = {'emb': 0.005, 'ggnn': 0.0001, 'cosine': 0.005}[method]
     if args.lr is not None:
         lr = args.lr
     debug = False
-    keep_one_per_prop = True if method == 'emb' else False
+    keep_one_per_prop = {'emb': True, 'ggnn': False, 'cosine': True}[method]
     use_cache = False
     use_pseudo_property = False
     show_progress = args.show_progress
@@ -167,7 +176,7 @@ if __name__ == '__main__':
     batch_size = args.batch_size
     num_class_dict = {'nway': 16, 'pointwise': 1, 'pointwisemerge': 1}
     num_graph_dict = {'nway': 1, 'pointwise': 2, 'pointwisemerge': 1}
-    layer_timesteps = [1]
+    layer_timesteps = [3, 3]
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
     get_dataset_filepath = lambda split, preped=False: os.path.join(
         args.dataset_dir, split + '.' + args.dataset_format + ('.{}.prep'.format(edge_type) if preped else ''))
@@ -182,10 +191,12 @@ if __name__ == '__main__':
     if args.preped:
         subgraph_dict = None
     else:
-        subgraph_dict = read_subgraph_file(args.subgraph_file, only_root=method == 'emb')
+        subgraph_dict = read_subgraph_file(args.subgraph_file, only_root=method in {'emb', 'cosine'})
 
     # filter emb and get all the properties used by dry run datasets
     if args.filter_emb:
+        if method != 'ggnn':
+            raise Exception('use ggnn to filter emb')
         all_ids = defaultdict(lambda: 0)
         for split in ['train', 'dev', 'test']:
             ds = Dataset(get_dataset_filepath(split), subgraph_dict, edge_type='one')
@@ -240,8 +251,12 @@ if __name__ == '__main__':
         DataLoader(ds, batch_size=batch_size, shuffle=shuffle, sampler=sampler,
                    num_workers=num_workers, collate_fn=ds.collate_fn)
 
-    train_data = Dataset(get_dataset_filepath('train', args.preped), **dataset_params)
-    if method == 'emb':
+    if issubclass(Dataset, PointwiseDataset):
+        # TODO: set neg_ratio
+        train_data = Dataset(get_dataset_filepath('train', args.preped), **dataset_params, neg_ratio=None)
+    else:
+        train_data = Dataset(get_dataset_filepath('train', args.preped), **dataset_params)
+    if method == 'emb' or method == 'cosine':
         train_dataloader = get_dataloader(train_data, True)
     else:
         train_dataloader = get_dataloader(
@@ -292,7 +307,7 @@ if __name__ == '__main__':
                                            device=device, show_progress=show_progress)
             print('init')
             #print(np.mean(dev_loss), dev_metric.eval(dev_pred))
-            print(np.mean(dev_loss), accuracy(dev_pred))
+            print(np.mean(dev_loss), accuracy(dev_pred, agg='max'))
 
         # train, dev, test
         train_pred, train_loss = one_epoch(args, 'train', train_dataloader, optimizer,
@@ -303,7 +318,8 @@ if __name__ == '__main__':
                                          device=device, show_progress=show_progress)
 
         # evaluate
-        train_metric, dev_metric, test_metric = accuracy(train_pred), accuracy(dev_pred), accuracy(test_pred)
+        train_metric, dev_metric, test_metric = \
+            accuracy(train_pred, agg='max'), accuracy(dev_pred, agg='max'), accuracy(test_pred, agg='max')
         print('epoch {:4d}\ttr_loss: {:>.3f}\tdev_loss: {:>.3f}\tte_loss: {:>.3f}'.format(
             epoch + 1, np.mean(train_loss), np.mean(dev_loss), np.mean(test_loss)), end='')
         print('\t\ttr_acc: {:>.3f}\tdev_acc: {:>.3f}\ttest_acc: {:>.3f}'.format(

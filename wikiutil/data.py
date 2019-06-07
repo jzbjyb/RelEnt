@@ -451,7 +451,7 @@ class PropertyDataset(Dataset):
         print('collecting ids ...')
         ids = defaultdict(lambda: 0)
         for i in tqdm(range(self.__len__())):
-            for id in self.getids(self.__getitem__(i)):
+            for id in self.getids(i):
                 ids[id] += 1
         return ids
 
@@ -517,7 +517,7 @@ class PointwiseDataset(PropertyDataset):
                  use_cache: bool = False,
                  filter_prop: set = None,
                  keep_one_per_prop: bool = False,
-                 neg_ratio: int = 5,  # TODO: set this externally
+                 neg_ratio: int = None,
                  manager: Manager = None,
                  use_pseudo_property: bool = False,
                  use_top: bool = False):
@@ -555,9 +555,20 @@ class PointwiseDataset(PropertyDataset):
             return self.create_subgraph(p1o, pid2=p2o[0]), self.create_subgraph(p2o), label
 
 
-    def getids(self, getitem_result):
-        g1, g2, _ = getitem_result
-        return g1.ids | g2.ids
+    def getids(self, idx):
+        p1o, p2o, label = self.inst_list[idx]
+        ids = set()
+        for p, occs in [p1o, p2o]:
+            ids.add(p)
+            for hid, tid in occs:
+                ids.add(hid)
+                ids.add(tid)
+                for sg in [hid, tid]:
+                    for h, p, t in self.subgraph_dict[sg]:
+                        ids.add(h)
+                        ids.add(p)
+                        ids.add(t)
+        return ids
 
 
     def collate_fn(self, insts: List):
@@ -591,8 +602,8 @@ class PointwisemergeDataset(PointwiseDataset):
             return self.create_pair_subgraph(p1o, p2o), label
 
 
-    def getids(self, getitem_result):
-        g, _ = getitem_result
+    def getids(self, idx):
+        g, _ = self[idx]
         return g.ids
 
 
@@ -651,8 +662,8 @@ class NwayDataset(PropertyDataset):
             return self.create_subgraph(poccs), label
 
 
-    def getids(self, getitem_result):
-        g, _ = getitem_result
+    def getids(self, idx):
+        g, _ = self[idx]
         return g.ids
 
 

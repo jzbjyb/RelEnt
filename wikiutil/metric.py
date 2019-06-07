@@ -215,7 +215,11 @@ def accuracy_nway(predictions: List[Tuple[str, List, int]], method='macro'):
     return acc
 
 
-def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='macro'):
+def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='macro', agg='product'):
+    # 'max': whether the class with max prob is parent
+    # 'product': whether the parent is selected and non-ancestors are not selected
+    # 'rank': whether ancestors get higher scores than non-ancestors
+    assert agg in {'product', 'max', 'rank'}
     # TODO only have macro version
     child2ancestor = defaultdict(lambda: defaultdict(list))
     for parent, child, logits, label in predictions:
@@ -223,19 +227,45 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
         child2ancestor[child][parent].append(logits)
     corr, total = 0, 0
     eval_result = []
-    for child in child2ancestor:
-        c = 0  # 0 is correct
-        for parent in child2ancestor[child]:
-            pred = np.mean(child2ancestor[child][parent])  # TODO: this is ensemble
-            if (parent, child) in is_parent:  # TODO: relation with multiple parents
-                if pred < 0.5:
-                    c = 1  # not find parent
+    if agg == 'product':
+        for child in child2ancestor:
+            c = 0  # 0 is correct
+            for parent in child2ancestor[child]:
+                pred = np.mean(child2ancestor[child][parent])  # TODO: this is ensemble
+                if (parent, child) in is_parent:  # TODO: relation with multiple parents
+                    if pred < 0.5:
+                        c = 1  # not find parent
+                        break
+                elif (parent, child) not in is_ancestor:
+                    if pred >= 0.5:
+                        c = 2  # find fake parent
+                        break
+            corr += c == 0
+            total += 1
+            eval_result.append((child, c))
+    elif agg == 'max':
+        for child in child2ancestor:
+            c = 0  # 0 is correct
+            scores = sorted([(parent, np.mean(child2ancestor[child][parent])) for parent in child2ancestor[child]],
+                            key=lambda x: -x[1])
+            if (scores[0][0], child) not in is_parent:
+                c = 1  # not find parent
+            corr += c == 0
+            total += 1
+            eval_result.append((child, c))
+    elif agg == 'rank':
+        for child in child2ancestor:
+            c = 0  # 0 is correct
+            scores = sorted([(parent, np.mean(child2ancestor[child][parent])) for parent in child2ancestor[child]],
+                            key=lambda x: -x[1])
+            found_non_ancestors = False
+            for parent, score in scores:
+                if (parent, child) not in is_ancestor:
+                    found_non_ancestors = True
+                elif found_non_ancestors:
+                    c = 1  # ancestors are ranked behind non-ancestors
                     break
-            elif (parent, child) not in is_ancestor:
-                if pred >= 0.5:
-                    c = 2  # find fake parent
-                    break
-        corr += c == 0
-        total += 1
-        eval_result.append((child, c))
+            corr += c == 0
+            total += 1
+            eval_result.append((child, c))
     return corr / total

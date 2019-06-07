@@ -460,6 +460,7 @@ class PropertyOccurrence():
               subtrees: List[PropertySubtree] = None):
         pid2occs: Dict[str, List[Tuple]] = {}
         num_long_tail_prop = 0
+        print('load property occurrences ...')
         for p in tqdm(pids):
             occs = read_prop_occ_file_from_dir(
                 p, prop_occ_dir, filter=True, contain_name=False, use_order=True)

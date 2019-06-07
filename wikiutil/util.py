@@ -17,6 +17,15 @@ def load_tsv_as_dict(filepath, keyfunc=lambda x:x, valuefunc=lambda x:x):
     return result
 
 
+def load_tsv_as_list(filepath):
+    result = []
+    with open(filepath, 'r') as fin:
+        for l in fin:
+            l = l.strip().split('\t')
+            result.append(l)
+    return result
+
+
 def file_filter_by_key(cache_dir):
     def wrapper(func):
         @functools.wraps(func)

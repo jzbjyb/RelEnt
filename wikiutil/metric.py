@@ -212,7 +212,7 @@ def accuracy_nway(predictions: List[Tuple[str, List, int]], method='macro'):
         acc = np.mean(list(map(itemgetter(1), acc_per_prop)))
     elif method == 'micro':
         acc = corr / total
-    return acc
+    return acc, _  # TODO: add rank results
 
 
 def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='macro', agg='product'):
@@ -226,12 +226,27 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
         c = (logits >= 0.5 and label) or (logits < 0.5 and not label)
         child2ancestor[child][parent].append(logits)
     corr, total = 0, 0
+    # ensemble predictions
+    for child in child2ancestor:
+        for parent in child2ancestor[child]:
+            child2ancestor[child][parent] = np.mean(child2ancestor[child][parent])  # TODO: this is ensemble
+    # get ranking for error analysis
+    def get_rel(parent, child):
+        if (parent, child) in is_parent:
+            return 'parent'
+        elif (parent, child) in is_ancestor:
+            return 'ancestor'
+        else:
+            return '*'
+    ranks = {}
+    for child in child2ancestor:
+        ranks[child] = sorted(child2ancestor[child].items(), key=lambda x: -x[1])
+        ranks[child] = [(parent, pred, get_rel(parent, child)) for parent, pred in ranks[child]]
     eval_result = []
     if agg == 'product':
         for child in child2ancestor:
             c = 0  # 0 is correct
-            for parent in child2ancestor[child]:
-                pred = np.mean(child2ancestor[child][parent])  # TODO: this is ensemble
+            for parent, pred in child2ancestor[child].items():
                 if (parent, child) in is_parent:  # TODO: relation with multiple parents
                     if pred < 0.5:
                         c = 1  # not find parent
@@ -246,8 +261,7 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
     elif agg == 'max':
         for child in child2ancestor:
             c = 0  # 0 is correct
-            scores = sorted([(parent, np.mean(child2ancestor[child][parent])) for parent in child2ancestor[child]],
-                            key=lambda x: -x[1])
+            scores = sorted(child2ancestor[child].items(), key=lambda x: -x[1])
             if (scores[0][0], child) not in is_parent:
                 c = 1  # not find parent
             corr += c == 0
@@ -256,8 +270,7 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
     elif agg == 'rank':
         for child in child2ancestor:
             c = 0  # 0 is correct
-            scores = sorted([(parent, np.mean(child2ancestor[child][parent])) for parent in child2ancestor[child]],
-                            key=lambda x: -x[1])
+            scores = sorted(child2ancestor[child].items(), key=lambda x: -x[1])
             found_non_ancestors = False
             for parent, score in scores:
                 if (parent, child) not in is_ancestor:
@@ -268,4 +281,20 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
             corr += c == 0
             total += 1
             eval_result.append((child, c))
-    return corr / total
+    return corr / total, ranks
+
+
+def rank_to_csv(ranks: Dict[str, List], filepath: str, key2name: Dict[str, str] = None):
+    def doc_formatter(docid: str, score: float, comment: str):
+        if key2name is not None:
+            docid = key2name[docid]
+        return ' '.join([docid, '{:.2f}'.format(score), comment])
+    max_num_docs = np.max([len(r) for q, r in ranks.items()])
+    with open(filepath, 'w') as fout:
+        fout.write('query,' + ','.join(map(lambda x: 'pos_' + str(x), range(max_num_docs))) + '\n')
+        for q, r in ranks.items():
+            if key2name is not None:
+                q = key2name[q]
+            fout.write(q + ',')
+            fout.write(','.join(map(lambda x: doc_formatter(*x), r)))
+            fout.write('\n')

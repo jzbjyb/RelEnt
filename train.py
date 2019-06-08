@@ -12,8 +12,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, RandomSampler
 from wikiutil.data import PointwiseDataset, NwayDataset, PointwisemergeDataset
 from wikiutil.util import filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
-from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise
-from wikiutil.property import read_prop_file, read_subgraph_file
+from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise, rank_to_csv
+from wikiutil.property import read_prop_file, read_subgraph_file, read_subprop_file
 from wikiutil.constant import AGG_NODE, AGG_PROP
 from analogy.ggnn import GatedGraphNeuralNetwork
 
@@ -187,6 +187,10 @@ if __name__ == '__main__':
     else:
         accuracy = accuracy_pointwise
 
+    # load properties
+    subprops = read_subprop_file(args.subprop_file)
+    pid2plabel = dict(p[0] for p in subprops)
+
     # load subgraph
     if args.preped:
         subgraph_dict = None
@@ -307,7 +311,7 @@ if __name__ == '__main__':
                                            device=device, show_progress=show_progress)
             print('init')
             #print(np.mean(dev_loss), dev_metric.eval(dev_pred))
-            print(np.mean(dev_loss), accuracy(dev_pred, agg='max'))
+            print(np.mean(dev_loss), accuracy(dev_pred, agg='max')[0])
 
         # train, dev, test
         train_pred, train_loss = one_epoch(args, 'train', train_dataloader, optimizer,
@@ -318,12 +322,14 @@ if __name__ == '__main__':
                                          device=device, show_progress=show_progress)
 
         # evaluate
-        train_metric, dev_metric, test_metric = \
-            accuracy(train_pred, agg='max'), accuracy(dev_pred, agg='max'), accuracy(test_pred, agg='max')
+        train_metric, _ = accuracy(train_pred, agg='max')
+        dev_metric, _ = accuracy(dev_pred, agg='max')
+        test_metric, test_ranks = accuracy(test_pred, agg='max')
         print('epoch {:4d}\ttr_loss: {:>.3f}\tdev_loss: {:>.3f}\tte_loss: {:>.3f}'.format(
             epoch + 1, np.mean(train_loss), np.mean(dev_loss), np.mean(test_loss)), end='')
         print('\t\ttr_acc: {:>.3f}\tdev_acc: {:>.3f}\ttest_acc: {:>.3f}'.format(
             train_metric, dev_metric, test_metric))
+        rank_to_csv(test_ranks, 'ranks.csv', key2name=pid2plabel)
         '''
         print('accuracy')
         print(train_metirc.eval_by('property', 'accuracy', train_pred),

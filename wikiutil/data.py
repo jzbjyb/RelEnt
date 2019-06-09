@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import Dataset
 from .property import read_multi_pointiwse_file, read_nway_file
 from .util import DefaultOrderedDict, load_tsv_as_dict
-from .constant import AGG_NODE, AGG_PROP
+from .constant import AGG_NODE, AGG_PROP, PADDING
 
 
 TOP_ENTITY_IDS = set(load_tsv_as_dict('data/entity_count_5000.tsv').keys())
@@ -41,7 +41,7 @@ class PropertySubgraph():
                  occurrences: Tuple[Tuple[str, str]] = None,
                  subgraph_dict: Dict[str, List[Tuple[str, str, str]]] = None,
                  emb_id2ind: Dict[str, int] = None,
-                 padding_ind: int = 0,  # TODO: add padding index
+                 padding: str = PADDING,  # TODO: add padding
                  edge_type: str = 'one',
                  use_pseudo_property: bool = False,
                  agg_property: str = AGG_PROP,
@@ -57,7 +57,7 @@ class PropertySubgraph():
         self.occurrences2 = occurrences2
         self.subgraph_dict = subgraph_dict
         self.emb_id2ind = emb_id2ind
-        self.padding_ind = padding_ind
+        self.padding = padding
         assert edge_type in {'one', 'property', 'only_property', 'bow'}
         # 'one': properties are treated as nodes and only use a single type of edges
         # 'property': properties are treated as edges
@@ -141,11 +141,13 @@ class PropertySubgraph():
 
 
     def is_pass_check(self, id):
+        if not self.use_top:
+            return True
         if id.startswith('P'):
-            if self.use_top and id not in TOP_PROP_IDS:
+            if id not in TOP_PROP_IDS:
                 return False
         elif id.startswith('Q'):
-            if self.use_top and id not in TOP_ENTITY_IDS:
+            if id not in TOP_ENTITY_IDS:
                 return False
         else:
             raise Exception
@@ -156,6 +158,8 @@ class PropertySubgraph():
         ''' convert to gnn input format (adjacency list, input emb index, and prop index) '''
 
         if self.edge_type == 'one':
+            # use padding to replace infrequent entities or properties
+            normalize = lambda x: x if self.is_pass_check(x) else self.padding
             # build adj list
             id2ind = DefaultOrderedDict(lambda: len(id2ind))  # entity/proerty id to index mapping
             pid2count = {}  # used to generate a pseudo property id for each occurrence of a property
@@ -175,17 +179,14 @@ class PropertySubgraph():
                     adjs.append((id2ind[ppid], id2ind[self.pid]))
                 else:
                     ppid = self.pid
-                if self.is_pass_check(hid):
-                    adjs.append((id2ind[hid], id2ind[ppid]))
-                if self.is_pass_check(tid):
-                    adjs.append((id2ind[ppid], id2ind[tid]))
+                adjs.append((id2ind[normalize(hid)], id2ind[ppid]))
+                adjs.append((id2ind[ppid], id2ind[normalize(tid)]))
                 try:
                     for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
                         for e1, pid, e2 in two_side:
-                            if not self.is_pass_check(e1) or \
-                                    not self.is_pass_check(pid) or \
-                                    not self.is_pass_check(e2):
-                                continue
+                            e1 = normalize(e1)
+                            pid = normalize(pid)
+                            e2 = normalize(e2)
                             if self.use_pseudo_property:  # use a pseudo prop and link it to the real one
                                 ppid = self.get_pseudo_property_id(pid, e1, e2, pid2count)
                                 adjs.append((id2ind[ppid], id2ind[pid]))
@@ -237,8 +238,7 @@ class PropertySubgraph():
                 except KeyError:
                     raise DataPrepError
             else:
-                # when id2ind does not exist, use padding_ind
-                emb_ind = np.array([self.padding_ind] * len(id2ind))
+                emb_ind = np.array([0] * len(id2ind))
 
             if self.merge:
                 return id2ind, {'one': adjs, 'two': ide_adjs}, emb_ind, 0
@@ -286,8 +286,7 @@ class PropertySubgraph():
                 except KeyError:
                     raise DataPrepError
             else:
-                # when id2ind does not exist, use padding_ind
-                emb_ind = np.array([self.padding_ind] * len(id2ind))
+                emb_ind = np.array([0] * len(id2ind))
 
             return id2ind, adjs_dict, emb_ind, 0
 
@@ -324,7 +323,7 @@ class PropertySubgraph():
                 except KeyError:
                     raise DataPrepError
             else:
-                emb_ind = np.array([self.padding_ind] * len(id2ind))
+                emb_ind = np.array([0] * len(id2ind))
 
             return id2ind, pid2adjs, emb_ind, 0
 
@@ -360,8 +359,7 @@ class PropertySubgraph():
                 except KeyError:
                     raise DataPrepError
             else:
-                # when id2ind does not exist, use padding_ind
-                emb_ind = np.array([self.padding_ind] * len(id2ind))
+                emb_ind = np.array([0] * len(id2ind))
 
             return id2ind, {'bow': adjs}, emb_ind, 0
 
@@ -418,7 +416,7 @@ class PropertyDataset(Dataset):
                  subgraph_dict: Dict[str, List],
                  properties_as_relations: set = None,  # the property set used as relations
                  emb_id2ind: Dict[str, int] = None,
-                 padding_ind: int = 0,
+                 padding: str = PADDING,
                  edge_type: str = 'one',
                  use_cache: bool = False,
                  use_pseudo_property: bool = False,
@@ -428,7 +426,7 @@ class PropertyDataset(Dataset):
             self.pid2ind = OrderedDict((pid, i) for i, pid in enumerate(properties_as_relations))
         self.edge_type = edge_type
         self.emb_id2ind = emb_id2ind
-        self.padding_ind = padding_ind
+        self.padding = padding
         self.use_cache = use_cache
         self.use_pseudo_property = use_pseudo_property
         self.use_top = use_top
@@ -465,7 +463,7 @@ class PropertyDataset(Dataset):
         # pid2 is used to avoid cheating
         sg = PropertySubgraph(
             pid, occs, self.subgraph_dict, self.emb_id2ind,
-            self.padding_ind, self.edge_type, self.use_pseudo_property, property_id2=pid2, use_top=self.use_top)
+            self.padding, self.edge_type, self.use_pseudo_property, property_id2=pid2, use_top=self.use_top)
         if self.use_cache:
             self._cache[property_occ] = sg
         return sg
@@ -480,7 +478,7 @@ class PropertyDataset(Dataset):
         pid2, occs2 = property_occ2
         sg = PropertySubgraph(
             pid1, occs1, self.subgraph_dict, self.emb_id2ind,
-            self.padding_ind, self.edge_type, self.use_pseudo_property,
+            self.padding, self.edge_type, self.use_pseudo_property,
             merge=True, property_id2=pid2, occurrences2=occs2)
         if self.use_cache:
             self._cache[(property_occ1, property_occ2)] = sg
@@ -512,7 +510,7 @@ class PointwiseDataset(PropertyDataset):
                  subgraph_dict: Dict[str, List],
                  properties_as_relations: set = None,  # the property set used as relations
                  emb_id2ind: Dict[str, int] = None,
-                 padding_ind: int = 0,
+                 padding: str = PADDING,
                  edge_type: str = 'one',
                  use_cache: bool = False,
                  filter_prop: set = None,
@@ -522,7 +520,7 @@ class PointwiseDataset(PropertyDataset):
                  use_pseudo_property: bool = False,
                  use_top: bool = False):
         super(PointwiseDataset, self).__init__(
-            subgraph_dict, properties_as_relations, emb_id2ind, padding_ind,
+            subgraph_dict, properties_as_relations, emb_id2ind, padding,
             edge_type, use_cache, use_pseudo_property, use_top)
         print('load data from {} ...'.format(filepath))
         if filepath.endswith('.prep'):
@@ -628,7 +626,7 @@ class NwayDataset(PropertyDataset):
                  subgraph_dict: Dict[str, List],
                  properties_as_relations: set = None,  # the property set used as relations
                  emb_id2ind: Dict[str, int] = None,
-                 padding_ind: int = 0,
+                 padding: str = 0,
                  edge_type: str = 'one',
                  use_cache: bool = False,
                  filter_prop: set = None,
@@ -636,7 +634,7 @@ class NwayDataset(PropertyDataset):
                  use_pseudo_property: bool = False,
                  use_top: bool = False):
         super(NwayDataset, self).__init__(
-            subgraph_dict, properties_as_relations, emb_id2ind, padding_ind,
+            subgraph_dict, properties_as_relations, emb_id2ind, padding,
             edge_type, use_cache, use_pseudo_property, use_top)
         print('load data from {} ...'.format(filepath))
         if filepath.endswith('.prep'):

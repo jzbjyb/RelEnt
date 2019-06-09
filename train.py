@@ -14,7 +14,7 @@ from wikiutil.data import PointwiseDataset, NwayDataset, PointwisemergeDataset
 from wikiutil.util import filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
 from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise, rank_to_csv
 from wikiutil.property import read_prop_file, read_subgraph_file, read_subprop_file
-from wikiutil.constant import AGG_NODE, AGG_PROP
+from wikiutil.constant import AGG_NODE, AGG_PROP, PADDING
 from analogy.ggnn import GatedGraphNeuralNetwork
 
 
@@ -38,7 +38,8 @@ class Model(nn.Module):
         # get embedding
         if emb is not None:  # init from pre-trained
             vocab_size, emb_size = emb.shape
-            self.emb = nn.Embedding.from_pretrained(torch.tensor(emb).float(), freeze=True)
+            self.emb = nn.Embedding.from_pretrained(
+                torch.tensor(emb).float(), freeze=True, padding_idx=padding_ind)
         else:  # random init
             self.emb = nn.Embedding(vocab_size, emb_size, padding_idx=padding_ind)
 
@@ -218,7 +219,8 @@ if __name__ == '__main__':
         exit(1)
 
     # load embedding
-    emb_id2ind, emb = read_embeddings_from_text_file(args.emb_file, debug=debug, emb_size=200) \
+    emb_id2ind, emb = read_embeddings_from_text_file(
+        args.emb_file, debug=debug, emb_size=200, use_padding=True) \
         if args.emb_file else (None, None)
     #properties_as_relations = {'P31', 'P21', 'P527', 'P17'}  # for debug
     properties_as_relations = load_tsv_as_dict(os.path.join(args.dataset_dir, 'pid2ind.tsv'), valuefunc=int)
@@ -245,6 +247,7 @@ if __name__ == '__main__':
         'subgraph_dict': subgraph_dict,
         'properties_as_relations': properties_as_relations,
         'emb_id2ind': emb_id2ind,
+        'padding': PADDING,
         'edge_type': edge_type,
         'keep_one_per_prop': keep_one_per_prop,
         'use_cache': use_cache,
@@ -284,6 +287,7 @@ if __name__ == '__main__':
     model = Model(num_class=num_class_dict[args.dataset_format],
                   num_graph=num_graph_dict[args.dataset_format],
                   emb=emb,
+                  padding_ind=0,  # the first position is padding embedding
                   hidden_size=64,
                   method=method,
                   num_edge_types=num_edge_types,

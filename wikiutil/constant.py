@@ -1,2 +1,3 @@
 AGG_NODE = '<AGG_NODE>'
 AGG_PROP = '<AGG_PROP>'
+PADDING = '<PAD>'

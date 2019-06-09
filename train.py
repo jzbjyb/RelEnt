@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, RandomSampler
-from wikiutil.data import PointwiseDataset, NwayDataset, PointwisemergeDataset
+from wikiutil.data import PointwiseDataset, NwayDataset, PointwisemergeDataset, BowDataset
 from wikiutil.util import filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
 from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise, rank_to_csv
 from wikiutil.property import read_prop_file, read_subgraph_file, read_subprop_file
@@ -29,13 +29,19 @@ class Model(nn.Module):
                  hidden_size: int = 64,
                  method: str = 'ggnn',
                  num_edge_types: int = 1,
-                 layer_timesteps: List[int] = [3, 3]):
+                 layer_timesteps: List[int] = [3, 3],
+                 match: str = 'concat'):
         super(Model, self).__init__()
-        assert method in {'ggnn', 'emb', 'cosine'}
+        assert method in {'ggnn', 'emb', 'cosine', 'bow'}
         self.method = method
+        assert match in {'concat', 'cosine'}
+        # 'concat': embeddings of two relations are concatenated to make prediction
+        # 'cosine': embeddings of two relations are compared by cosine similarity
+        self.match = match
         self.num_class = num_class
         self.num_graph = num_graph
         # get embedding
+        self.padding_ind = padding_ind
         if emb is not None:  # init from pre-trained
             vocab_size, emb_size = emb.shape
             self.emb = nn.Embedding.from_pretrained(
@@ -57,30 +63,39 @@ class Model(nn.Module):
             nn.Linear(16, num_class)
         )
 
-
     def forward(self, data: Dict, labels: torch.LongTensor):
         ge_list = []
         for i in range(self.num_graph):
             # get representation
             ge = self.emb(data['emb_ind'][i])
-            if self.method != 'cosine':
-                ge = self.emb_proj(ge)
-            if self.method == 'ggnn':
-                gnn = self.gnn.compute_node_representations(
-                    initial_node_representation=ge, adjacency_lists=data['adj'][i])
-                # TODO: combine ggnn and emb
-                #ge = 0.5 * ge + 0.5 * gnn
-                ge = gnn
-            # select
-            # SHAPE: (batch_size, emb_size)
-            ge = torch.index_select(ge, 0, data['prop_ind'][i])
+            if self.method == 'bow':
+                # average using stat
+                # SHAPE: (batch_size, emb_size)
+                ge = (data['stat'][i].unsqueeze(-1) * ge).sum(1)  # TODO: add bias?
+                ge /= data['emb_ind'][i].ne(self.padding_ind).sum(-1).float().unsqueeze(-1)
+                ge = F.relu(ge)
+            else:
+                if self.method != 'cosine':
+                    ge = self.emb_proj(ge)
+                if self.method == 'ggnn':
+                    gnn = self.gnn.compute_node_representations(
+                        initial_node_representation=ge, adjacency_lists=data['adj'][i])
+                    # TODO: combine ggnn and emb
+                    #ge = 0.5 * ge + 0.5 * gnn
+                    ge = gnn
+                # SHAPE: (batch_size, emb_size)
+                ge = torch.index_select(ge, 0, data['prop_ind'][i])  # select property emb
             ge_list.append(ge)
         # match
-        if self.method == 'cosine':
-            ge = self.cosine_cla(F.cosine_similarity(ge_list[0], ge_list[1]).unsqueeze(-1))
-        else:
-            ge = torch.cat(ge_list, -1)
-            ge = self.cla(ge)
+        if self.match == 'concat':
+            if self.method == 'cosine':
+                ge = self.cosine_cla(F.cosine_similarity(ge_list[0], ge_list[1]).unsqueeze(-1))
+            else:
+                ge = torch.cat(ge_list, -1)
+                ge = self.cla(ge)
+        elif self.match == 'cosine':
+            ge = F.cosine_similarity(ge_list[0], ge_list[1]).unsqueeze(-1)
+
         if self.num_class == 1:
             # binary classification loss
             logits = torch.sigmoid(ge)
@@ -113,7 +128,9 @@ def one_epoch(args, split, dataloader, optimizer, device, show_progress=True):
             optimizer.step()
 
         loss_li.append(loss.item())
-        if args.dataset_format == 'pointwise' or args.dataset_format == 'pointwisemerge':
+        if args.dataset_format == 'pointwise' or \
+                args.dataset_format == 'pointwisemerge' or \
+                args.dataset_format == 'bow':
             pred_li.extend([(pid1, pid2, logits[i].item(), label[i].item())
                             for i, (pid1, pid2) in
                             enumerate(zip(batch[0]['meta']['pid1'], batch[0]['meta']['pid2']))])
@@ -129,7 +146,7 @@ def one_epoch(args, split, dataloader, optimizer, device, show_progress=True):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('train analogy model')
     parser.add_argument('--dataset_dir', type=str, required=True, help='dataset dir')
-    parser.add_argument('--dataset_format', type=str, choices=['pointwise', 'nway', 'pointwisemerge'],
+    parser.add_argument('--dataset_format', type=str, choices=['pointwise', 'nway', 'pointwisemerge', 'bow'],
                         default='pointwise', help='dataset format')
     parser.add_argument('--subgraph_file', type=str, required=True, help='entity subgraph file')
     parser.add_argument('--subprop_file', type=str, required=True, help='subprop file')
@@ -164,19 +181,19 @@ if __name__ == '__main__':
 
     # configs
     method = args.method
-    lr = {'emb': 0.005, 'ggnn': 0.0001, 'cosine': 0.005}[method]
+    lr = {'emb': 0.005, 'ggnn': 0.0001, 'cosine': 0.005, 'bow': 0.0001}[method]
     if args.lr is not None:
         lr = args.lr
     debug = False
-    keep_one_per_prop = {'emb': True, 'ggnn': False, 'cosine': True}[method]
+    keep_one_per_prop = {'emb': True, 'ggnn': False, 'cosine': True, 'bow': False}[method]
     use_cache = False
     use_pseudo_property = False
     show_progress = args.show_progress
     edge_type = args.edge_type
     num_workers = args.num_workers
     batch_size = args.batch_size
-    num_class_dict = {'nway': 16, 'pointwise': 1, 'pointwisemerge': 1}
-    num_graph_dict = {'nway': 1, 'pointwise': 2, 'pointwisemerge': 1}
+    num_class_dict = {'nway': 16, 'pointwise': 1, 'pointwisemerge': 1, 'bow': 1}
+    num_graph_dict = {'nway': 1, 'pointwise': 2, 'pointwisemerge': 1, 'bow': 2}
     layer_timesteps = [3, 3]
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
     get_dataset_filepath = lambda split, preped=False: os.path.join(
@@ -236,7 +253,7 @@ if __name__ == '__main__':
     elif edge_type == 'property':
         num_edge_types = len(properties_as_relations)
     elif edge_type == 'bow':
-        num_edge_types = 1
+        num_edge_types = 2  # head and tail
     else:
         raise NotImplementedError
     if args.dataset_format == 'pointwisemerge':
@@ -284,14 +301,25 @@ if __name__ == '__main__':
         exit(1)
 
     # config model, optimizer and evaluation
-    model = Model(num_class=num_class_dict[args.dataset_format],
-                  num_graph=num_graph_dict[args.dataset_format],
-                  emb=emb,
-                  padding_ind=0,  # the first position is padding embedding
-                  hidden_size=64,
-                  method=method,
-                  num_edge_types=num_edge_types,
-                  layer_timesteps=layer_timesteps)
+    if method == 'bow':
+        model = Model(num_class=num_class_dict[args.dataset_format],  # number of classes for prediction
+                      num_graph=num_graph_dict[args.dataset_format],  # number of graphs in data dict
+                      emb_size=64,
+                      vocab_size=len(emb_id2ind),
+                      padding_ind=0,
+                      emb=None,
+                      hidden_size=64,
+                      method='bow',
+                      match='concat')
+    else:
+        model = Model(num_class=num_class_dict[args.dataset_format],
+                      num_graph=num_graph_dict[args.dataset_format],
+                      emb=emb,
+                      padding_ind=0,  # the first position is padding embedding
+                      hidden_size=64,
+                      method=method,
+                      num_edge_types=num_edge_types,
+                      layer_timesteps=layer_timesteps)
     if args.load:
         print('load model from {}'.format(args.load))
         model.load_state_dict(torch.load(args.load))

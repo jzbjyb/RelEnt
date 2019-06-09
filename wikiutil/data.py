@@ -23,14 +23,6 @@ def load_lines(filepath) -> List[str]:
     return result
 
 
-def load_preprocessed_line(line: str, edge_type: str = 'one'):
-    ''' all of the fields are PropertySubgraph except for the last one, which is label '''
-    fields = line.strip().split('\t\t')
-    label = int(fields[-1])
-    fields = [PropertySubgraph.from_string(fields[i], edge_type=edge_type) for i in range(len(fields) - 1)]
-    return tuple(fields) + (label,)
-
-
 class DataPrepError(Exception):
     pass
 
@@ -154,12 +146,15 @@ class PropertySubgraph():
         return True
 
 
+    def normalize(self, id):
+        ''' use padding to replace infrequent entities or properties '''
+        return id if self.is_pass_check(id) else self.padding
+
+
     def _to_gnn_input(self):
         ''' convert to gnn input format (adjacency list, input emb index, and prop index) '''
 
         if self.edge_type == 'one':
-            # use padding to replace infrequent entities or properties
-            normalize = lambda x: x if self.is_pass_check(x) else self.padding
             # build adj list
             id2ind = DefaultOrderedDict(lambda: len(id2ind))  # entity/proerty id to index mapping
             pid2count = {}  # used to generate a pseudo property id for each occurrence of a property
@@ -179,15 +174,15 @@ class PropertySubgraph():
                     adjs.append((id2ind[ppid], id2ind[self.pid]))
                 else:
                     ppid = self.pid
-                adjs.append((id2ind[normalize(hid)], id2ind[ppid]))
-                adjs.append((id2ind[ppid], id2ind[normalize(tid)]))
+                adjs.append((id2ind[self.normalize(hid)], id2ind[ppid]))
+                adjs.append((id2ind[ppid], id2ind[self.normalize(tid)]))
                 try:
                     for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
                         # TODO: pid could be pid2, which might be cheating
                         for e1, pid, e2 in two_side:
-                            e1 = normalize(e1)
-                            pid = normalize(pid)
-                            e2 = normalize(e2)
+                            e1 = self.normalize(e1)
+                            pid = self.normalize(pid)
+                            e2 = self.normalize(e2)
                             if self.use_pseudo_property:  # use a pseudo prop and link it to the real one
                                 ppid = self.get_pseudo_property_id(pid, e1, e2, pid2count)
                                 adjs.append((id2ind[ppid], id2ind[pid]))
@@ -204,14 +199,14 @@ class PropertySubgraph():
                 for i, (hid, tid) in enumerate(self.occurrences2):
                     if self.use_pseudo_property:
                         raise NotImplementedError
-                    adjs.append((id2ind[normalize(hid)], id2ind[self.pid2]))
-                    adjs.append((id2ind[self.pid2], id2ind[normalize(tid)]))
+                    adjs.append((id2ind[self.normalize(hid)], id2ind[self.pid2]))
+                    adjs.append((id2ind[self.pid2], id2ind[self.normalize(tid)]))
                     try:
                         for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
                             for e1, pid, e2 in two_side:
-                                e1 = normalize(e1)
-                                pid = normalize(pid)
-                                e2 = normalize(e2)
+                                e1 = self.normalize(e1)
+                                pid = self.normalize(pid)
+                                e2 = self.normalize(e2)
                                 adjs.append((id2ind[e1], id2ind[pid]))
                                 adjs.append((id2ind[pid], id2ind[e2]))
                     except KeyError:
@@ -231,7 +226,7 @@ class PropertySubgraph():
 
             return id2ind, adjs_dict, emb_ind, 0
 
-        elif self.edge_type == 'only_property':
+        elif self.edge_type == 'only_property':  # TODO: add use_top
             # build adj list
             id2ind = DefaultOrderedDict(lambda: len(id2ind))  # proerty id to index mapping
             _ = id2ind[self.pid]  # make sure that the central property is alway indexed as 0
@@ -260,6 +255,66 @@ class PropertySubgraph():
                         for e1, pid, e2 in self.subgraph_dict[tid]:
                             if pid != self.pid2:
                                 adjs_dict['tail'].append((id2ind[pid], id2ind[self.pid2]))
+                    except KeyError:
+                        raise DataPrepError
+
+            adjs_dict = dict((k, list(set(v))) for k, v in adjs_dict.items())
+
+            # build emb index
+            if self.emb_id2ind:
+                try:
+                    emb_ind = np.array([self.emb_id2ind[k.split('-')[0]] for k, v in id2ind.items()])
+                except KeyError:
+                    raise DataPrepError
+            else:
+                emb_ind = np.array([0] * len(id2ind))
+
+            return id2ind, adjs_dict, emb_ind, 0
+
+        elif self.edge_type == 'bow':
+            # build adj list
+            id2ind = DefaultOrderedDict(lambda: len(id2ind))  # entity/proerty id to index mapping
+            pi = id2ind[self.pid]  # make sure that the central property is alway indexed as 0
+            adjs_dict: Dict[str, List] = {'head': [], 'tail': []}
+            for i, (hid, tid) in enumerate(self.occurrences):
+                adjs_dict['head'].append((id2ind[self.normalize(hid)], pi))
+                adjs_dict['tail'].append((id2ind[self.normalize(tid)], pi))
+                try:
+                    # TODO: avoid treating
+                    for e1, pid, e2 in self.subgraph_dict[hid]:
+                        if pid == self.pid:
+                            continue
+                        adjs_dict['head'].append((id2ind[self.normalize(e1)], pi))
+                        adjs_dict['head'].append((id2ind[self.normalize(pid)], pi))
+                        adjs_dict['head'].append((id2ind[self.normalize(e2)], pi))
+                    for e1, pid, e2 in self.subgraph_dict[tid]:
+                        if pid == self.pid:
+                            continue
+                        adjs_dict['tail'].append((id2ind[self.normalize(e1)], pi))
+                        adjs_dict['tail'].append((id2ind[self.normalize(pid)], pi))
+                        adjs_dict['tail'].append((id2ind[self.normalize(e2)], pi))
+                except KeyError:
+                    raise DataPrepError
+
+            if self.merge:
+                pi2 = id2ind[self.pid2]
+                adjs_dict['pair'] = [(pi2, pi)]
+                for i, (hid, tid) in enumerate(self.occurrences2):
+                    adjs_dict['head'].append((id2ind[self.normalize(hid)], pi2))
+                    adjs_dict['tail'].append((id2ind[self.normalize(tid)], pi2))
+                    try:
+                        for e1, pid, e2 in self.subgraph_dict[hid]:
+                            if pid == self.pid2:
+                                continue
+                            adjs_dict['head'].append((id2ind[self.normalize(e1)], pi2))
+                            adjs_dict['head'].append((id2ind[self.normalize(pid)], pi2))
+                            adjs_dict['head'].append((id2ind[self.normalize(e2)], pi2))
+                        for e1, pid, e2 in self.subgraph_dict[tid]:
+                            if pid == self.pid2:
+                                continue
+                            adjs_dict['tail'].append((id2ind[self.normalize(e1)], pi2))
+                            adjs_dict['tail'].append((id2ind[self.normalize(pid)], pi2))
+                            adjs_dict['tail'].append((id2ind[self.normalize(e2)], pi2))
                     except KeyError:
                         raise DataPrepError
 
@@ -312,42 +367,6 @@ class PropertySubgraph():
                 emb_ind = np.array([0] * len(id2ind))
 
             return id2ind, pid2adjs, emb_ind, 0
-
-        elif self.edge_type == 'bow':
-            # build adj list
-            id2ind = DefaultOrderedDict(lambda: len(id2ind))  # entity/proerty id to index mapping
-            pi = id2ind[self.pid]  # make sure that the central property is alway indexed as 0
-            adjs = []
-            for i, (hid, tid) in enumerate(self.occurrences):
-                if self.is_pass_check(hid):
-                    adjs.append((id2ind[hid], pi))
-                if self.is_pass_check(tid):
-                    adjs.append((id2ind[tid], pi))
-                try:
-                    for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
-                        for e1, pid, e2 in two_side:
-                            if self.is_pass_check(e1):
-                                adjs.append((id2ind[e1], pi))
-                            if self.is_pass_check(e2):
-                                adjs.append((id2ind[e2], pi))
-                            if self.is_pass_check(pid) and (not self.pid2 or pid != self.pid2):
-                                adjs.append((id2ind[pid], pi))
-                except KeyError:
-                    raise DataPrepError
-
-            # remove duplicate item in adjs
-            adjs = list(set(adjs))
-
-            # build emb index
-            if self.emb_id2ind:
-                try:
-                    emb_ind = np.array([self.emb_id2ind[k.split('-')[0]] for k, v in id2ind.items()])
-                except KeyError:
-                    raise DataPrepError
-            else:
-                emb_ind = np.array([0] * len(id2ind))
-
-            return id2ind, {'bow': adjs}, emb_ind, 0
 
 
     @staticmethod
@@ -490,6 +509,14 @@ class PropertyDataset(Dataset):
         return '\t\t'.join(fields)
 
 
+    def load_preprocessed_line(self, line: str):
+        ''' all of the fields are PropertySubgraph except for the last one, which is label '''
+        fields = line.strip().split('\t\t')
+        label = int(fields[-1])
+        fields = [PropertySubgraph.from_string(fields[i], edge_type=self.edge_type) for i in range(len(fields) - 1)]
+        return tuple(fields) + (label,)
+
+
 class PointwiseDataset(PropertyDataset):
     def __init__(self,
                  filepath: str,
@@ -533,7 +560,7 @@ class PointwiseDataset(PropertyDataset):
 
     def __getitem__(self, idx):
         if self.use_prep:
-            return load_preprocessed_line(self.inst_list[idx], edge_type=self.edge_type)
+            return self.load_preprocessed_line(self.inst_list[idx])
         else:
             p1o, p2o, label = self.inst_list[idx]
             return self.create_subgraph(p1o, pid2=p2o[0]), self.create_subgraph(p2o), label
@@ -580,7 +607,7 @@ class PointwisemergeDataset(PointwiseDataset):
 
     def __getitem__(self, idx):
         if self.use_prep:
-            return load_preprocessed_line(self.inst_list[idx], edge_type=self.edge_type)
+            return self.load_preprocessed_line(self.inst_list[idx])
         else:
             p1o, p2o, label = self.inst_list[idx]
             return self.create_pair_subgraph(p1o, p2o), label
@@ -640,7 +667,7 @@ class NwayDataset(PropertyDataset):
 
     def __getitem__(self, idx):
         if self.use_prep:
-            return load_preprocessed_line(self.inst_list[idx], edge_type=self.edge_type)
+            return self.load_preprocessed_line(self.inst_list[idx])
         else:
             poccs, label = self.inst_list[idx]
             return self.create_subgraph(poccs), label
@@ -660,4 +687,151 @@ class NwayDataset(PropertyDataset):
         prop_ind = torch.LongTensor(prop_ind)
         return {'adj': [adjs_li], 'emb_ind': [emb_ind], 'prop_ind': [prop_ind],
                 'meta': {'pid': pids}}, \
+               torch.LongTensor(labels)
+
+
+class PropertyBow:
+    def __init__(self,
+                 property_id: str = None,
+                 occurrences: Tuple[Tuple[str, str]] = None,
+                 subgraph_dict: Dict[str, List[Tuple[str, str, str]]] = None,
+                 emb_id2ind: Dict[str, int] = None,
+                 padding: str = PADDING,  # TODO: add padding
+                 merge: bool = False,
+                 property_id2: str = None,
+                 occurrences2: Tuple[Tuple[str, str]] = None,
+                 use_top: bool = False):
+        if property_id is None:
+            return
+        self.pid = property_id
+        self.occurrences = occurrences
+        self.subgraph_dict = subgraph_dict
+        self.emb_id2ind = emb_id2ind
+        self.padding = padding
+        self.merge = merge
+        self.pid2 = property_id2
+        self.occurrences2 = occurrences2
+        self.use_top = use_top
+        self.emb_ind, self.stat = self._to_bow()
+
+
+    def normalize(self, id):
+        if not self.use_top:
+            return id
+        if id.startswith('P'):
+            if id not in TOP_PROP_IDS:
+                return self.padding
+        elif id.startswith('Q'):
+            if id not in TOP_ENTITY_IDS:
+                return self.padding
+        else:
+            raise Exception
+        return id
+
+
+    def _to_bow(self) -> Tuple[List, List]:
+        id2count = defaultdict(lambda: 0)
+        for hid, tid in self.occurrences:
+            id2count[self.normalize(hid)] += 1
+            id2count[self.normalize(tid)] += 1
+            for e1, p, e2 in self.subgraph_dict[hid] + self.subgraph_dict[tid]:
+                id2count[self.normalize(e1)] += 1
+                id2count[self.normalize(p)] += 1
+                id2count[self.normalize(e2)] += 1
+        ids, counts = zip(*id2count.items())
+        total_count = np.sum(counts)
+        ids = [self.emb_id2ind[id] for id in ids]
+        counts = [np.log(c + 1) for c in counts]  # TODO: add other stat
+        return ids, counts
+
+
+    def to_string(self):
+        '''
+        dump necessary properties to a formatted string.
+        '''
+        pid = self.pid
+        if self.pid2 is not None:
+            pid += '|' + self.pid2
+        return '{pid}\t{emb_ind}\t{stat}'.format(
+            pid=pid,
+            emb_ind=','.join(str(i) for i in self.emb_ind),
+            stat=','.join('{:.3f}'.format(i) for i in self.stat))
+
+
+    @classmethod
+    def from_string(cls, format_str):
+        '''
+        recover necessary properties from a formatted string.
+        necessary properties: pid, emb_ind, stat
+        '''
+        empty_bow = cls()
+        pid, emb_ind, stat = format_str.split('\t')
+        if pid.find('|') >= 0:
+            pid = pid.split('|')
+            empty_bow.pid = pid[0]
+            empty_bow.pid2 = pid[1]
+        else:
+            empty_bow.pid = pid
+        empty_bow.emb_ind = list(map(int, emb_ind.split(',')))
+        empty_bow.stat = list(map(float, stat.split(',')))
+        return empty_bow
+
+
+class BowDataset(PointwiseDataset):
+    def __init__(self, *args, **kwargs):
+        super(BowDataset, self).__init__(*args, **kwargs)
+
+
+    def load_preprocessed_line(self, line: str):
+        ''' all of the fields are PropertyBow except for the last one, which is label '''
+        fields = line.strip().split('\t\t')
+        label = int(fields[-1])
+        fields = [PropertyBow.from_string(fields[i]) for i in range(len(fields) - 1)]
+        return tuple(fields) + (label,)
+
+
+    def create_bow(self, property_occ: Tuple[str, Tuple[Tuple[str, str]]]) -> PropertyBow:
+        pid, occ = property_occ
+        return PropertyBow(property_id=pid,
+                           occurrences=occ,
+                           subgraph_dict=self.subgraph_dict,
+                           emb_id2ind=self.emb_id2ind,
+                           padding=self.padding,
+                           merge=False,
+                           property_id2=None,
+                           occurrences2=None,
+                           use_top=self.use_top)
+
+
+    def __getitem__(self, idx):
+        if self.use_prep:
+            return self.load_preprocessed_line(self.inst_list[idx])
+        else:
+            p1o, p2o, label = self.inst_list[idx]
+            return self.create_bow(p1o), self.create_bow(p2o), label
+
+
+    def item_to_str(self, item):
+        fields = []
+        for field in item:
+            if type(field) is PropertyBow:
+                fields.append(field.to_string())
+            elif type(field) is int:
+                fields.append(str(field))
+        return '\t\t'.join(fields)
+
+
+    def collate_fn(self, insts: List):
+        bow1s, bow2s, labels = zip(*insts)
+        pid1s = [b.pid for b in bow1s]
+        pid2s = [b.pid for b in bow2s]
+        emb_ind_li, stat_li = [], []
+        for bows in [bow1s, bow2s]:
+            max_len = np.max([len(b.emb_ind) for b in bows])
+            emb_ind = [b.emb_ind + [0] * (max_len - len(b.emb_ind)) for b in bows]
+            emb_ind_li.append(torch.LongTensor(emb_ind))
+            stat = [b.stat + [0] * (max_len - len(b.stat)) for b in bows]
+            stat_li.append(torch.FloatTensor(stat))
+        return {'emb_ind': emb_ind_li, 'stat': stat_li,
+                'meta': {'pid1': pid1s, 'pid2': pid2s}}, \
                torch.LongTensor(labels)

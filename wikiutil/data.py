@@ -165,6 +165,7 @@ class PropertySubgraph():
             pid2count = {}  # used to generate a pseudo property id for each occurrence of a property
             _ = id2ind[self.pid]  # make sure that the central property is alway indexed as 0
             adjs = []
+            adjs_dict = {'one': adjs}
             for i, (hid, tid) in enumerate(self.occurrences):
                 # for each occurrence, create a pseudo property and link it to the real one
                 # TODO: (1) use another type of link to represent
@@ -173,7 +174,6 @@ class PropertySubgraph():
                 #  appear multiple times in the subgraph
                 # TODO: (3) it might be better to treat the links from property to entity and
                 #  the links from entity to property differently
-                # TODO: (4) is use_top, some occurrence might not have any nodes in the subgraph
                 if self.use_pseudo_property:  # use a pseudo prop and link it to the real one
                     ppid = self.get_pseudo_property_id(self.pid, hid, tid, pid2count)
                     adjs.append((id2ind[ppid], id2ind[self.pid]))
@@ -183,6 +183,7 @@ class PropertySubgraph():
                 adjs.append((id2ind[ppid], id2ind[normalize(tid)]))
                 try:
                     for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
+                        # TODO: pid could be pid2, which might be cheating
                         for e1, pid, e2 in two_side:
                             e1 = normalize(e1)
                             pid = normalize(pid)
@@ -199,37 +200,25 @@ class PropertySubgraph():
 
             # merge
             if self.merge:
-                old_set = set(id2ind.keys())
-                ide_adjs = []
-                pid2 = self.build_identical_link(self.pid2, old_set, id2ind, ide_adjs)
+                adjs_dict['pair'] = [(id2ind[self.pid2], id2ind[self.pid])]
                 for i, (hid, tid) in enumerate(self.occurrences2):
                     if self.use_pseudo_property:
                         raise NotImplementedError
-                    if self.is_pass_check(hid):
-                        _hid = self.build_identical_link(hid, old_set, id2ind, ide_adjs)
-                        adjs.append((id2ind[_hid], id2ind[pid2]))
-                    if self.is_pass_check(tid):
-                        _tid = self.build_identical_link(tid, old_set, id2ind, ide_adjs)
-                        adjs.append((id2ind[pid2], id2ind[_tid]))
+                    adjs.append((id2ind[normalize(hid)], id2ind[self.pid2]))
+                    adjs.append((id2ind[self.pid2], id2ind[normalize(tid)]))
                     try:
                         for two_side in [self.subgraph_dict[hid], self.subgraph_dict[tid]]:
                             for e1, pid, e2 in two_side:
-                                if self.use_pseudo_property:
-                                    raise NotImplementedError
-                                if not self.is_pass_check(e1) or \
-                                        not self.is_pass_check(pid) or \
-                                        not self.is_pass_check(e2):
-                                    continue
-                                pid = self.build_identical_link(pid, old_set, id2ind, ide_adjs)
-                                e1 = self.build_identical_link(e1, old_set, id2ind, ide_adjs)
-                                e2 = self.build_identical_link(e2, old_set, id2ind, ide_adjs)
+                                e1 = normalize(e1)
+                                pid = normalize(pid)
+                                e2 = normalize(e2)
                                 adjs.append((id2ind[e1], id2ind[pid]))
                                 adjs.append((id2ind[pid], id2ind[e2]))
                     except KeyError:
                         raise DataPrepError
 
             # remove duplicate item in adjs
-            adjs = list(set(adjs))
+            adjs_dict = dict((k, list(set(v))) for k, v in adjs_dict.items())
 
             # build emb index
             if self.emb_id2ind:
@@ -240,10 +229,7 @@ class PropertySubgraph():
             else:
                 emb_ind = np.array([0] * len(id2ind))
 
-            if self.merge:
-                return id2ind, {'one': adjs, 'two': ide_adjs}, emb_ind, 0
-            else:
-                return id2ind, {'one': adjs}, emb_ind, 0
+            return id2ind, adjs_dict, emb_ind, 0
 
         elif self.edge_type == 'only_property':
             # build adj list
@@ -479,7 +465,7 @@ class PropertyDataset(Dataset):
         sg = PropertySubgraph(
             pid1, occs1, self.subgraph_dict, self.emb_id2ind,
             self.padding, self.edge_type, self.use_pseudo_property,
-            merge=True, property_id2=pid2, occurrences2=occs2)
+            merge=True, property_id2=pid2, occurrences2=occs2, use_top=self.use_top)
         if self.use_cache:
             self._cache[(property_occ1, property_occ2)] = sg
         return sg

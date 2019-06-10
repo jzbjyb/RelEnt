@@ -219,13 +219,13 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
     # 'max': whether the class with max prob is parent
     # 'product': whether the parent is selected and non-ancestors are not selected
     # 'rank': whether ancestors get higher scores than non-ancestors
-    assert agg in {'product', 'max', 'rank'}
+    # 'no': no aggregation
+    assert agg in {'product', 'max', 'rank', 'no'}
     # TODO only have macro version
     child2ancestor = defaultdict(lambda: defaultdict(list))
     for parent, child, logits, label in predictions:
         c = (logits >= 0.5 and label) or (logits < 0.5 and not label)
         child2ancestor[child][parent].append(logits)
-    corr, total = 0, 0
     # ensemble predictions
     for child in child2ancestor:
         for parent in child2ancestor[child]:
@@ -242,7 +242,9 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
     for child in child2ancestor:
         ranks[child] = sorted(child2ancestor[child].items(), key=lambda x: -x[1])
         ranks[child] = [(parent, pred, get_rel(parent, child)) for parent, pred in ranks[child]]
+    # eval
     eval_result = []
+    corr, total = 0, 0
     if agg == 'product':
         for child in child2ancestor:
             c = 0  # 0 is correct
@@ -281,6 +283,11 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
             corr += c == 0
             total += 1
             eval_result.append((child, c))
+    elif agg == 'no':
+        for parent, child, logits, label in predictions:
+            c = (logits >= 0.5 and label) or (logits < 0.5 and not label)
+            corr += int(c)
+            total += 1
     return corr / total, ranks
 
 

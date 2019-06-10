@@ -336,6 +336,7 @@ if __name__ == '__main__':
 
     # train and test
     pat, best_dev_metric = 0, 0
+    eval_agg = 'max'
     for epoch in range(300):
         # init performance
         if epoch == 0:
@@ -343,7 +344,7 @@ if __name__ == '__main__':
                                            device=device, show_progress=show_progress)
             print('init')
             #print(np.mean(dev_loss), dev_metric.eval(dev_pred))
-            print(np.mean(dev_loss), accuracy(dev_pred, agg='max')[0])
+            print(np.mean(dev_loss), accuracy(dev_pred, agg=eval_agg)[0])
 
         # train, dev, test
         train_pred, train_loss = one_epoch(args, 'train', train_dataloader, optimizer,
@@ -354,9 +355,9 @@ if __name__ == '__main__':
                                          device=device, show_progress=show_progress)
 
         # evaluate
-        train_metric, _ = accuracy(train_pred, agg='max')
-        dev_metric, _ = accuracy(dev_pred, agg='max')
-        test_metric, test_ranks = accuracy(test_pred, agg='max')
+        train_metric, _ = accuracy(train_pred, agg=eval_agg)
+        dev_metric, _ = accuracy(dev_pred, agg=eval_agg)
+        test_metric, test_ranks = accuracy(test_pred, agg=eval_agg)
         print('epoch {:4d}\ttr_loss: {:>.3f}\tdev_loss: {:>.3f}\tte_loss: {:>.3f}'.format(
             epoch + 1, np.mean(train_loss), np.mean(dev_loss), np.mean(test_loss)), end='')
         print('\t\ttr_acc: {:>.3f}\tdev_acc: {:>.3f}\ttest_acc: {:>.3f}'.format(

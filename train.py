@@ -53,7 +53,8 @@ class Model(nn.Module):
         self.emb_proj = nn.Linear(emb_size, hidden_size)
         self.gnn = GatedGraphNeuralNetwork(hidden_size=hidden_size, num_edge_types=num_edge_types,
                                            layer_timesteps=layer_timesteps, residual_connections={})
-        self.cosine_cla = nn.Linear(1, 1)
+        self.cosine_bias = nn.Parameter(torch.zeros(1))
+        self.cosine_cla = lambda x: x + self.cosine_bias
 
         self.cla = nn.Sequential(
             nn.Dropout(p=0.0),
@@ -72,7 +73,7 @@ class Model(nn.Module):
                 # average using stat
                 # SHAPE: (batch_size, emb_size)
                 ge = (data['stat'][i].unsqueeze(-1) * ge).sum(1)  # TODO: add bias?
-                ge /= data['emb_ind'][i].ne(self.padding_ind).sum(-1).float().unsqueeze(-1)
+                #ge /= data['emb_ind'][i].ne(self.padding_ind).sum(-1).float().unsqueeze(-1)
                 ge = F.relu(ge)
             else:
                 if self.method != 'cosine':
@@ -88,13 +89,10 @@ class Model(nn.Module):
             ge_list.append(ge)
         # match
         if self.match == 'concat':
-            if self.method == 'cosine':
-                ge = self.cosine_cla(F.cosine_similarity(ge_list[0], ge_list[1]).unsqueeze(-1))
-            else:
-                ge = torch.cat(ge_list, -1)
-                ge = self.cla(ge)
+            ge = torch.cat(ge_list, -1)
+            ge = self.cla(ge)
         elif self.match == 'cosine':
-            ge = F.cosine_similarity(ge_list[0], ge_list[1]).unsqueeze(-1)
+            ge = self.cosine_cla(F.cosine_similarity(ge_list[0], ge_list[1]).unsqueeze(-1))
 
         if self.num_class == 1:
             # binary classification loss
@@ -162,6 +160,7 @@ if __name__ == '__main__':
     parser.add_argument('--show_progress', action='store_true', help='whether to show training progress')
 
     parser.add_argument('--method', type=str, default='emb', help='which model to use')
+    parser.add_argument('--match', type=str, default='concat', help='how to match two embeddings')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--lr', type=float, default=None, help='learning rate')
     parser.add_argument('--edge_type', type=str, default='only_property', help='how to form the graph')
@@ -310,7 +309,7 @@ if __name__ == '__main__':
                       emb=None,
                       hidden_size=64,
                       method='bow',
-                      match='concat')
+                      match=args.match)
     else:
         model = Model(num_class=num_class_dict[args.dataset_format],
                       num_graph=num_graph_dict[args.dataset_format],
@@ -319,7 +318,8 @@ if __name__ == '__main__':
                       hidden_size=64,
                       method=method,
                       num_edge_types=num_edge_types,
-                      layer_timesteps=layer_timesteps)
+                      layer_timesteps=layer_timesteps,
+                      match=args.match)
     if args.load:
         print('load model from {}'.format(args.load))
         model.load_state_dict(torch.load(args.load))

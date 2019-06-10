@@ -4,7 +4,7 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data/analogy_dataset/by_entail_622_subgraph10_ancestor5_sample100_maxoccperprop10k
+data_dir=data/analogy_dataset/by_entail_622_subgraph10_ancestor5_sample100_maxoccperprop10k_notremovelongtail
 data_format=pointwise
 subgraph_file=data/subgraph/property_occurrence_all_shuf_top100k.subgraph
 #subgraph_file=data/property_occurrence_subtree.subgraph
@@ -25,7 +25,7 @@ python prep_data.py \
     --num_occ_per_subgraph 10 \
     --num_sample 100 \
     --contain_train \
-    --load_split
+    --allow_empty_split
 
 python train.py \
     --dataset_dir ${data_dir} \

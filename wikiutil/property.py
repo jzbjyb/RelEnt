@@ -324,10 +324,15 @@ class PropertySubtree():
 
 
     @staticmethod
-    def split_within_subtree(subtree, tr, dev, te, return_parent: bool = False, filter_set: set = None):
+    def split_within_subtree(subtree, tr, dev, te,
+                             return_parent: bool = False,
+                             filter_set: set = None,
+                             allow_empty_split: bool = False):
         ''' split the subtree by spliting each tir into train/dev/test set '''
         parent = subtree[0]
         siblings = [c[0] for c in subtree[1] if filter_set is None or c[0] in filter_set]
+        if len(siblings) <= 0:  # skip leaf nodes
+            return
         shuffle(siblings)
         trs = int(len(siblings) * tr)
         devs = int(len(siblings) * dev)
@@ -335,20 +340,38 @@ class PropertySubtree():
         test_props = siblings[trs + devs:]
         dev_props = siblings[trs:trs + devs]
         train_props = siblings[:trs]
-        if len(train_props) > 0 and len(dev_props) > 0 and len(test_props) > 0 and \
-                (filter_set is None or parent in filter_set):
+        if len(train_props) <= 0 or len(dev_props) <= 0 or len(test_props) <= 0:
+            # the number of samples is really small
+            # we randomly split at this situation
+            train_props, dev_props, test_props = [], [], []
+            all_props = [train_props, dev_props, test_props]
+            choices = np.random.choice(3, len(siblings), p=[tr, dev, te])
+            for sibing, choice in zip(siblings, choices):
+                all_props[choice].append(sibing)
+        if allow_empty_split:
+            allow = len(train_props) >= 0 and len(dev_props) >= 0 and len(test_props) >= 0 and \
+                    (filter_set is None or parent in filter_set)
+        else:
+            allow = len(train_props) > 0 and len(dev_props) > 0 and len(test_props) > 0 and \
+                    (filter_set is None or parent in filter_set)
+        if allow:
             if return_parent:
                 yield parent, train_props, dev_props, test_props
             else:
                 yield train_props, dev_props, test_props
         for c in subtree[1]:
             yield from PropertySubtree.split_within_subtree(
-                c, tr, dev, te, return_parent=return_parent, filter_set=filter_set)
+                c, tr, dev, te, return_parent=return_parent, filter_set=filter_set,
+                allow_empty_split=allow_empty_split)
 
 
-    def split_within(self, tr, dev, te, return_parent: bool = False, filter_set: set = None):
+    def split_within(self, tr, dev, te,
+                     return_parent: bool = False,
+                     filter_set: set = None,
+                     allow_empty_split: bool = False):
         yield from PropertySubtree.split_within_subtree(
-            self.tree, tr, dev, te, return_parent=return_parent, filter_set=filter_set)
+            self.tree, tr, dev, te, return_parent=return_parent, filter_set=filter_set,
+            allow_empty_split=allow_empty_split)
 
 
     @staticmethod

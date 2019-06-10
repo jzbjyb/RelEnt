@@ -40,6 +40,8 @@ if __name__ == '__main__':
                         help='number of pairs to sample/sample for each property pair/property')
     parser.add_argument('--load_split', action='store_true',
                         help='directly load train/dev/test and parent (if any) properties from out_dir')
+    parser.add_argument('--allow_empty_split', action='store_true',
+                        help='whether empty split is allowed. used in within_tree and by_entail and by_entail-n_way')
     args = parser.parse_args()
 
     random.seed(2019)
@@ -120,7 +122,8 @@ if __name__ == '__main__':
         # split each tir in a subtree into train/dev/test
         train_prop, dev_prop, test_prop = [], [], []
         for subtree in subtrees:
-            for train_p, dev_p, test_p in subtree.split_within(tr, dev, te, filter_set=all_propids):
+            for train_p, dev_p, test_p in subtree.split_within(
+                    tr, dev, te, filter_set=all_propids, allow_empty_split=args.allow_empty_split):
                 train_prop.extend(train_p)
                 dev_prop.extend(dev_p)
                 test_prop.extend(test_p)
@@ -137,7 +140,8 @@ if __name__ == '__main__':
             parent_prop, train_prop, dev_prop, test_prop = [], [], [], []
             for subtree in subtrees:
                 for parent, train_p, dev_p, test_p in subtree.split_within(
-                        tr, dev, te, return_parent=True, filter_set=all_propids):
+                        tr, dev, te, return_parent=True, filter_set=all_propids,
+                        allow_empty_split=args.allow_empty_split):
                     if parent in all_propids:
                         parent_prop.append(parent)
                         train_prop.extend(train_p)

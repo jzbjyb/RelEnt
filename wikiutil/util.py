@@ -193,7 +193,7 @@ def read_embeddings_from_text_file(filepath: str,
             emb.insert(0, [0] * emb_size)
         else:
             emb.insert(0, [0] * len(emb[0]))
-    return id2ind, np.array(emb, dtype=np.float32)
+    return dict(id2ind), np.array(emb, dtype=np.float32)
 
 
 def filer_embedding(in_filepath: str,

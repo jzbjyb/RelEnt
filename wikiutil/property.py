@@ -119,9 +119,9 @@ def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
 
 def read_nway_file(filepath,
                    filter_prop: set = None,
-                   keep_one_per_prop: bool = False) -> List[Tuple[Tuple[str, Tuple], int]]:
+                   keep_n_per_prop: int = None) -> List[Tuple[Tuple[str, Tuple], int]]:
     result = []
-    seen_prop = set()
+    prop2count = defaultdict(lambda: 0)
     with open(filepath, 'r') as fin:
         for l in fin:
             label, poccs = l.strip().split('\t')
@@ -132,47 +132,46 @@ def read_nway_file(filepath,
             pid = poccs[0]
             if filter_prop and pid not in filter_prop:
                 continue
-            if keep_one_per_prop and pid in seen_prop:
+            if keep_n_per_prop is not None and prop2count[pid] >= keep_n_per_prop:
                 continue
-            if keep_one_per_prop:
-                seen_prop.add(pid)
+            if keep_n_per_prop is not None:
+                prop2count[pid] += 1
             result.append(((pid, occs), label))
     return result
 
 
 def read_multi_pointiwse_file(filepath,
                               filter_prop: set = None,
-                              keep_one_per_prop: bool = False) \
+                              keep_n_per_prop: int = None) \
         -> List[Tuple[Tuple[str, Tuple], Tuple[str, Tuple], int]]:
     result = []
-    seen_prop = set()
+    prop2count = defaultdict(lambda: 0)
     with open(filepath, 'r') as fin:
         for l in fin:
             label, p1o, p2o = l.strip().split('\t')
             label = int(label)
-            p1 = p1o.split(' ')
-            p2 = p2o.split(' ')
-            assert len(p1) % 2 == 1 and len(p1) % 2 == 1, 'pointwise file format error'
-            p1occs = tuple(tuple(p1[i * 2 + 1:i * 2 + 3]) for i in range((len(p1) - 1) // 2))
-            p2occs = tuple(tuple(p2[i * 2 + 1:i * 2 + 3]) for i in range((len(p2) - 1) // 2))
-            p1 = p1[0]
-            p2 = p2[0]
+            p1, p1o = p1o.split(' ', 1)
+            p2, p2o = p2o.split(' ', 1)
             if p1 == p2:
                 # pairs of two same properties should not be considered
                 # TODO: this is just a workaround. An exception should be raised
                 continue
             if filter_prop and (p1 not in filter_prop or p2 not in filter_prop):
                 continue
-            if keep_one_per_prop and (p1, p2) in seen_prop:
+            if keep_n_per_prop is not None and prop2count[(p1, p2)] >= keep_n_per_prop:
                 continue
-            if keep_one_per_prop:
-                seen_prop.add((p1, p2))
-                seen_prop.add((p2, p1))
-            if len(set(p1occs) & set(p2occs)) > 0:
+            if keep_n_per_prop is not None:
+                prop2count[(p1, p2)] += 1  # don't add (p2, p1)
+            p1o = p1o.split(' ')
+            p2o = p2o.split(' ')
+            assert len(p1o) % 2 == 0 and len(p2o) % 2 == 0, 'pointwise file format error'
+            p1o = tuple(tuple(p1o[i * 2:i * 2 + 2]) for i in range(len(p1o) // 2))
+            p2o = tuple(tuple(p2o[i * 2:i * 2 + 2]) for i in range(len(p2o) // 2))
+            if len(set(p1o) & set(p2o)) > 0:
                 # skip examples where two subgraphs overlap
                 # TODO: this is just a workaround. An exception should be raised
                 continue
-            result.append(((p1, p1occs), (p2, p2occs), label))
+            result.append(((p1, p1o), (p2, p2o), label))
     return result
 
 

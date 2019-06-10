@@ -164,6 +164,10 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--lr', type=float, default=None, help='learning rate')
     parser.add_argument('--edge_type', type=str, default='only_property', help='how to form the graph')
+    parser.add_argument('--neg_ratio', type=int, default=None,
+                        help='how many negative example to draw per positive example')
+    parser.add_argument('--keep_n_per_prop', type=str, default=None,
+                        help='how many occurrences to keep per property (pair). used when dataset is too large')
 
     args = parser.parse_args()
 
@@ -184,7 +188,12 @@ if __name__ == '__main__':
     if args.lr is not None:
         lr = args.lr
     debug = False
-    keep_one_per_prop = {'emb': True, 'ggnn': False, 'cosine': True, 'bow': False}[method]
+    keep_n_per_prop = {'emb': 1, 'ggnn': None, 'cosine': 1, 'bow': None}[method]
+    if args.keep_n_per_prop is None:
+        train_keep_n_per_prop = keep_n_per_prop
+        dt_keep_n_per_prop = keep_n_per_prop
+    else:
+        train_keep_n_per_prop, dt_keep_n_per_prop = list(map(int, args.keep_n_per_prop.split(':')))
     use_cache = False
     use_pseudo_property = False
     show_progress = args.show_progress
@@ -265,7 +274,6 @@ if __name__ == '__main__':
         'emb_id2ind': emb_id2ind,
         'padding': PADDING,
         'edge_type': edge_type,
-        'keep_one_per_prop': keep_one_per_prop,
         'use_cache': use_cache,
         'use_pseudo_property': use_pseudo_property,
         'use_top': True,  # TODO: set using external params
@@ -275,18 +283,26 @@ if __name__ == '__main__':
                    num_workers=num_workers, collate_fn=ds.collate_fn)
 
     if issubclass(Dataset, PointwiseDataset):
-        # TODO: set neg_ratio
-        train_data = Dataset(get_dataset_filepath('train', args.preped), **dataset_params, neg_ratio=None)
+        train_data = Dataset(get_dataset_filepath('train', args.preped),
+                             **dataset_params,
+                             neg_ratio=args.neg_ratio,
+                             keep_n_per_prop=train_keep_n_per_prop)
     else:
-        train_data = Dataset(get_dataset_filepath('train', args.preped), **dataset_params)
+        train_data = Dataset(get_dataset_filepath('train', args.preped),
+                             **dataset_params,
+                             keep_n_per_prop=train_keep_n_per_prop)
     if method == 'emb' or method == 'cosine':
         train_dataloader = get_dataloader(train_data, True)
     else:
         train_dataloader = get_dataloader(
             train_data, False, RandomSampler(train_data, replacement=True, num_samples=50000))
-    dev_data = Dataset(get_dataset_filepath('dev', args.preped), **dataset_params)
+    dev_data = Dataset(get_dataset_filepath('dev', args.preped),
+                       **dataset_params,
+                       keep_n_per_prop=dt_keep_n_per_prop)
     dev_dataloader = get_dataloader(dev_data, False)
-    test_data = Dataset(get_dataset_filepath('test', args.preped), **dataset_params)
+    test_data = Dataset(get_dataset_filepath('test', args.preped),
+                        **dataset_params,
+                        keep_n_per_prop=dt_keep_n_per_prop)
     test_dataloader = get_dataloader(test_data, False)
 
     if args.prep_data:

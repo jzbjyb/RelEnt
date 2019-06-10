@@ -527,7 +527,7 @@ class PointwiseDataset(PropertyDataset):
                  edge_type: str = 'one',
                  use_cache: bool = False,
                  filter_prop: set = None,
-                 keep_one_per_prop: bool = False,
+                 keep_n_per_prop: int = None,
                  neg_ratio: int = None,
                  manager: Manager = None,
                  use_pseudo_property: bool = False,
@@ -542,7 +542,7 @@ class PointwiseDataset(PropertyDataset):
         else:
             self.use_prep = False
             self.inst_list = read_multi_pointiwse_file(
-                filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
+                filepath, filter_prop=filter_prop, keep_n_per_prop=keep_n_per_prop)
             if neg_ratio:
                 self.inst_list = self.pos_neg_filter(self.inst_list, neg_ratio=neg_ratio)
 
@@ -643,7 +643,7 @@ class NwayDataset(PropertyDataset):
                  edge_type: str = 'one',
                  use_cache: bool = False,
                  filter_prop: set = None,
-                 keep_one_per_prop: bool = False,
+                 keep_n_per_prop: int = None,
                  use_pseudo_property: bool = False,
                  use_top: bool = False):
         super(NwayDataset, self).__init__(
@@ -656,7 +656,7 @@ class NwayDataset(PropertyDataset):
         else:
             self.use_prep = False
             self.inst_list = read_nway_file(
-                filepath, filter_prop=filter_prop, keep_one_per_prop=keep_one_per_prop)
+                filepath, filter_prop=filter_prop, keep_n_per_prop=keep_n_per_prop)
 
         # TODO: use numpy array or shared array to avoid copy-on-write
 

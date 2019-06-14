@@ -5,7 +5,7 @@ from typing import Dict, Tuple
 from collections import defaultdict
 from random import shuffle
 from operator import itemgetter
-import argparse, os, random, time
+import argparse, os, random, time, pickle
 from itertools import combinations, product
 from tqdm import tqdm
 import numpy as np
@@ -31,7 +31,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_occ_per_subgraph', type=int, default=1,
                         help='number of occurrences used for each property subgraph')
     parser.add_argument('--method', type=str, default='by_tree',
-                        choices=['by_tree', 'within_tree', 'by_entail', 'by_entail-n_way'])
+                        choices=['by_tree', 'within_tree', 'by_entail', 'by_entail-n_way', 'by_entail-overlap'])
     parser.add_argument('--property_population', action='store_true',
                         help='parent properties are composed by children properties')
     parser.add_argument('--contain_train', action='store_true',
@@ -74,8 +74,8 @@ if __name__ == '__main__':
                                          emb_set=emb_set,
                                          max_occ_per_prop=args.max_occ_per_prop,
                                          num_occ_per_subgraph=args.num_occ_per_subgraph,
-                                         min_occ_per_prop=1000,
-                                         populate_method='combine_child',
+                                         min_occ_per_prop=None,
+                                         populate_method='top_down',
                                          subtrees=subtrees)
     else:
         # min_occ_per_prop is not used because some parent property (e.g., P3342: significant person)
@@ -128,7 +128,7 @@ if __name__ == '__main__':
                 dev_prop.extend(dev_p)
                 test_prop.extend(test_p)
 
-    elif args.method == 'by_entail' or args.method == 'by_entail-n_way':
+    elif args.method in {'by_entail', 'by_entail-n_way', 'by_entail-overlap'}:
         # split each tir in a subtree into train/dev/test by viewing parent property as label
         if args.load_split:
             print('load existing splits ...')
@@ -231,6 +231,11 @@ if __name__ == '__main__':
                             fout.write('{}\t{}\n'.format(label2id[label], po))
             print('{} labels up to now'.format(len(label2id)))
 
+        elif args.method in {'by_entail-overlap'}:
+            with open(os.path.join(args.out_dir, 'poccs.pickle'), 'wb') as fout:
+                pickle.dump(poccs.pid2occs, fout)
+
+
     if args.method in {'within_tree', 'by_entail', 'by_entail-n_way'}:
         subtrees_remains = [st for st in subtrees if len(set(st.nodes) & set(final_prop_split.keys())) > 0]
         # concat label and split
@@ -246,7 +251,7 @@ if __name__ == '__main__':
             for label, ind in label2id.items():
                 fout.write('{}\t{}\n'.format(label, ind))
 
-    elif args.method in {'by_entail'}:
+    elif args.method in {'by_entail', 'by_entail-overlap'}:
         # save parent properties (optional)
         with open(os.path.join(args.out_dir, 'label2ind.txt'), 'w') as fout:
             for ind, prop in enumerate(parent_prop):

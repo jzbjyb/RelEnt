@@ -411,6 +411,87 @@ class PropertySubtree():
             self.tree, id2label=id2label, defalut_label=defalut_label, prefix=prefix))
 
 
+    @staticmethod
+    def remove_by_parent_subtree(subtree: Tuple[str, List],
+                                 child2parent: Dict[str, str]):
+        ''' if a child is found in the tree but the parent is not the same, remove it (in-place) '''
+        parent = subtree[0]
+        keep = []
+        for c in subtree[1]:
+            child = c[0]
+            if child in child2parent and child2parent[child] != parent:
+                keep.append(False)
+            else:
+                keep.append(True)
+        # in-place manipulation
+        keep = [s for s, k in zip(subtree[1], keep) if k]
+        del subtree[1][:]
+        subtree[1].extend(keep)
+        for c in subtree[1]:
+            PropertySubtree.remove_by_parent_subtree(c, child2parent)
+
+
+    def remove_by_parent(self, child2parent: Dict[str, str]):
+        PropertySubtree.remove_by_parent_subtree(self.tree, child2parent)
+
+
+    @staticmethod
+    def populate_subtree(subtree: Tuple[str, List],
+                         pid2occs: Dict[str, List[Tuple]],
+                         new_pid2occs: Dict[str, set],
+                         include_self: bool = True):
+        parent, childs = subtree
+        if len(childs) == 0:  # leaf node
+            if parent in pid2occs:
+                new_pid2occs[parent] = set(pid2occs[parent])
+            return
+        for child in childs:  # none-leaf node, go deeper
+            PropertySubtree.populate_subtree(child, pid2occs, new_pid2occs, include_self=include_self)
+        # aggregate occs of childs
+        childs_occs = set()
+        for child in childs:
+            if child[0] not in new_pid2occs:
+                continue
+            childs_occs.update(new_pid2occs[child[0]])
+        if include_self and parent in pid2occs:
+            childs_occs.update(pid2occs[parent])
+        if len(childs_occs) > 0:
+            new_pid2occs[parent] = childs_occs
+
+
+    def populate(self,
+                 pid2occs: Dict[str, List[Tuple]],
+                 new_pid2occs: Dict[str, set],
+                 include_self: bool = True):
+        PropertySubtree.populate_subtree(self.tree, pid2occs, new_pid2occs, include_self=include_self)
+
+
+    @staticmethod
+    def avoid_overlap_subtree(subtree: Tuple[str, List],
+                              pid2occs: Dict[str, set],
+                              allowed: set = None):
+        parent, childs = subtree
+        if parent not in pid2occs:  # empty node
+            return
+        # remove occs not allowed
+        if allowed is not None:
+            pid2occs[parent] &= allowed
+        if len(childs) == 0:  # leaf node
+            return
+        # keep half and pass the other half to childs
+        occs = list(pid2occs[parent])
+        shuffle(occs)
+        kept = set(occs[:len(occs) // 2])
+        passed = set(occs[len(occs) // 2:])
+        pid2occs[parent] = kept
+        for child in childs:
+            PropertySubtree.avoid_overlap_subtree(child, pid2occs, allowed=passed)
+
+
+    def avoid_overlap(self, pid2occs: Dict[str, set]):
+        PropertySubtree.avoid_overlap_subtree(self.tree, pid2occs, allowed=None)
+
+
 def get_subtree(root: str, child_dict: Dict[str, List[str]]) -> Tuple[str, List[Tuple[str, List]]]:
     if root not in child_dict:
         return (root, [])
@@ -458,6 +539,29 @@ def get_is_ancestor(subtrees: List[PropertySubtree]):
             for anc in ancestors:
                 is_ancestor.add((anc, child))
     return is_ancestor
+
+
+def remove_common_child(subtrees: List[PropertySubtree]):
+    ''' if a property has more than one parents, only keep the deepest one '''
+    chid2parents: Dict[str, Dict] = defaultdict(lambda: {})
+    for subtree in subtrees:
+        for child, ancestors in subtree.traverse(return_ancestors=True):
+            if len(ancestors) <= 0:  # skip root
+                continue
+            depth = len(ancestors)
+            parent = ancestors[-1]
+            if parent in chid2parents[child]:
+                # this is cause by a non-leaf property with multiple different parents
+                continue
+            chid2parents[child][parent] = depth
+    chid2parents = dict((k, v) for k, v in chid2parents.items() if len(v) > 1)
+    print('{} childs have multiple parents'.format(len(chid2parents)))
+    # find the deepest parent
+    chid2parents: Dict[str, str] = dict((k, sorted(v.items(), key=lambda x: -x[1])[0][0])
+                                        for k, v in chid2parents.items())
+    # remove childs with other parents (in-place)
+    for subtree in subtrees:
+        subtree.remove_by_parent(chid2parents)
 
 
 class PropertyOccurrence():
@@ -509,28 +613,37 @@ class PropertyOccurrence():
         if min_occ_per_prop is not None:
             print('remove {} long tail properties with threshold {}'.format(
                 num_long_tail_prop, min_occ_per_prop))
-        if populate_method is not None:
-            print('populate properties recursively')
+        assert populate_method in {'bottom_up', 'top_down'}
+        if populate_method == 'bottom_up':
+            print('populate properties bottom_up')
             # TODO: if parent property is the union of child property, and subgraph is unmodified,
             #   the model can cheat.
             # TODO: An idea case is that when building train subgraph, dev and test
             #   properties are removed.
             new_pid2occs: Dict[str, set] = {}
             for subtree in tqdm(subtrees):
-                PropertyOccurrence.recursive_complete(
-                    pid2occs, subtree.tree, new_pid2occs, populate_method=populate_method)
+                PropertyOccurrence.bottom_up_complete(
+                    pid2occs, subtree.tree, new_pid2occs, populate_method='combine_child')
+            pid2occs = dict((k, list(v)) for k, v in new_pid2occs.items())
+        elif populate_method == 'top_down':
+            print('remove common childs')
+            remove_common_child(subtrees)
+            print('populate properties top_down')
+            new_pid2occs: Dict[str, set] = {}
+            PropertyOccurrence.top_down_complete(pid2occs, subtrees, new_pid2occs)
             pid2occs = dict((k, list(v)) for k, v in new_pid2occs.items())
         return cls(pid2occs, num_occ_per_subgraph=num_occ_per_subgraph)
 
 
     @staticmethod
-    def recursive_complete(pid2occs: Dict[str, List[Tuple]],
+    def bottom_up_complete(pid2occs: Dict[str, List[Tuple]],
                            subtree: Tuple[str, List],
                            new_pid2occs: Dict[str, set],
                            populate_method: str = 'combine_child'):
         # in all these populate_method, overlap should be avoided
         # 'combine_child': occs of a property is the union of all its children
         # 'combine_child_and_self': occs of a property is the union of all its children and itself
+        assert populate_method in {'combine_child', 'combine_child_and_self'}
         parent, childs = subtree
         if parent in new_pid2occs:  # has been processed
             return
@@ -539,7 +652,7 @@ class PropertyOccurrence():
                 new_pid2occs[parent] = set(pid2occs[parent])
             return
         for child in childs:  # none-leaf node, go deeper
-            PropertyOccurrence.recursive_complete(
+            PropertyOccurrence.bottom_up_complete(
                 pid2occs, child, new_pid2occs, populate_method=populate_method)
         # populate current property using children
         if populate_method in {'combine_child', 'combine_child_and_self'}:
@@ -566,6 +679,23 @@ class PropertyOccurrence():
                 new_pid2occs[parent] = parent_occs
         else:
             raise NotImplementedError
+
+
+    @staticmethod
+    def top_down_complete(pid2occs: Dict[str, List[Tuple]],
+                          subtrees: List[PropertySubtree],
+                          new_pid2occs: Dict[str, set]):
+        # first collect all the occurrences from the bottom to the top
+        # then avoid overlap in a top down manner so that
+        # all the ancestors have no overlap with a certain child
+
+        # bottom-up collection
+        for subtree in subtrees:
+            subtree.populate(pid2occs, new_pid2occs, include_self=True)
+
+        # top-down overlap removing
+        for subtree in subtrees:
+            subtree.avoid_overlap(new_pid2occs)
 
 
     @property

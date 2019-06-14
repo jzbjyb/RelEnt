@@ -353,6 +353,8 @@ if __name__ == '__main__':
     # train and test
     pat, best_dev_metric = 0, 0
     eval_agg = 'max'
+    if args.save and not os.path.exists(args.save):
+        os.mkdir(args.save)
     for epoch in range(300):
         # init performance
         if epoch == 0:
@@ -378,7 +380,6 @@ if __name__ == '__main__':
             epoch + 1, np.mean(train_loss), np.mean(dev_loss), np.mean(test_loss)), end='')
         print('\t\ttr_acc: {:>.3f}\tdev_acc: {:>.3f}\ttest_acc: {:>.3f}'.format(
             train_metric, dev_metric, test_metric))
-        rank_to_csv(test_ranks, 'ranks.csv', key2name=pid2plabel)
         '''
         print('accuracy')
         print(train_metirc.eval_by('property', 'accuracy', train_pred),
@@ -400,4 +401,5 @@ if __name__ == '__main__':
                 best_dev_metric = dev_metric
                 if args.save:
                     # save epoch with best dev metric
-                    torch.save(model.state_dict(), args.save)
+                    torch.save(model.state_dict(), os.path.join(args.save, 'model.bin'))
+                    rank_to_csv(test_ranks, os.path.join(args.save, 'ranks.csv'), key2name=pid2plabel)

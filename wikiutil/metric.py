@@ -295,13 +295,13 @@ def rank_to_csv(ranks: Dict[str, List], filepath: str, key2name: Dict[str, str] 
     def doc_formatter(docid: str, score: float, comment: str):
         if key2name is not None:
             docid = key2name[docid]
-        return ' '.join([docid, '{:.2f}'.format(score), comment])
+        return ' '.join(['"' + docid + '"', '{:.2f}'.format(score), comment])
     max_num_docs = np.max([len(r) for q, r in ranks.items()])
     with open(filepath, 'w') as fout:
         fout.write('query,' + ','.join(map(lambda x: 'pos_' + str(x), range(max_num_docs))) + '\n')
         for q, r in ranks.items():
             if key2name is not None:
                 q = key2name[q]
-            fout.write(q + ',')
+            fout.write('"{}"'.format(q) + ',')
             fout.write(','.join(map(lambda x: doc_formatter(*x), r)))
             fout.write('\n')

@@ -613,6 +613,8 @@ class PropertyOccurrence():
         if min_occ_per_prop is not None:
             print('remove {} long tail properties with threshold {}'.format(
                 num_long_tail_prop, min_occ_per_prop))
+        if populate_method is None:
+            return cls(pid2occs, num_occ_per_subgraph=num_occ_per_subgraph)
         assert populate_method in {'bottom_up', 'top_down'}
         if populate_method == 'bottom_up':
             print('populate properties bottom_up')

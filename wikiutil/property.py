@@ -724,8 +724,12 @@ class PropertyOccurrence():
                       num_sample: int,
                       sam_for_pid1: int = 1,
                       sam_for_pid2: int = 1) -> Iterable[Tuple[List, List]]:
+        if pid1 not in self._pid2multioccs or pid2 not in self._pid2multioccs:
+            return
         p1occs = self._pid2multioccs[pid1]
         p2occs = self._pid2multioccs[pid2]
+        if len(p1occs) <= 0 or len(p2occs) <= 0:
+            return
 
         sam_prob = min(1, num_sample / (len(p1occs) * len(p2occs)))
 

@@ -69,14 +69,20 @@ if __name__ == '__main__':
     #save_emb_ids(args.emb_file, args.emb_file + '.id')
     emb_set = read_emb_ids(args.emb_file)
     if args.property_population:
-        poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
-                                         subgraph_dict=subgraph_dict,
-                                         emb_set=emb_set,
-                                         max_occ_per_prop=args.max_occ_per_prop,
-                                         num_occ_per_subgraph=args.num_occ_per_subgraph,
-                                         min_occ_per_prop=None,
-                                         populate_method='top_down',
-                                         subtrees=subtrees)
+        if args.load_split and os.path.exists(os.path.join(args.out_dir, 'poccs.pickle')):
+            print('load preprocessed property occs')
+            with open(os.path.join(args.out_dir, 'poccs.pickle'), 'rb') as fin:
+                poccs = PropertyOccurrence(pickle.load(fin),
+                                           num_occ_per_subgraph=args.num_occ_per_subgraph)
+        else:
+            poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
+                                             subgraph_dict=subgraph_dict,
+                                             emb_set=emb_set,
+                                             max_occ_per_prop=args.max_occ_per_prop,
+                                             num_occ_per_subgraph=args.num_occ_per_subgraph,
+                                             min_occ_per_prop=None,
+                                             populate_method='top_down',
+                                             subtrees=subtrees)
     else:
         # min_occ_per_prop is not used because some parent property (e.g., P3342: significant person)
         # is unexpectedly small, and obviously we don't want to loss any parent properties.
@@ -236,7 +242,7 @@ if __name__ == '__main__':
                 pickle.dump(poccs.pid2occs, fout)
 
 
-    if args.method in {'within_tree', 'by_entail', 'by_entail-n_way'}:
+    if args.method in {'within_tree', 'by_entail', 'by_entail-n_way', 'by_entail-overlap'}:
         subtrees_remains = [st for st in subtrees if len(set(st.nodes) & set(final_prop_split.keys())) > 0]
         # concat label and split
         final_prop_split = dict((p, pid2plabel[p] + ' ' + final_prop_split[p].upper()) for p in pid2plabel)

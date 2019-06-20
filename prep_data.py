@@ -42,6 +42,7 @@ if __name__ == '__main__':
                         help='directly load train/dev/test and parent (if any) properties from out_dir')
     parser.add_argument('--allow_empty_split', action='store_true',
                         help='whether empty split is allowed. used in within_tree and by_entail and by_entail-n_way')
+    parser.add_argument('--filter_test', action='store_true', help='whether to remove test pid before population')
     args = parser.parse_args()
 
     random.seed(2019)
@@ -75,6 +76,10 @@ if __name__ == '__main__':
                 poccs = PropertyOccurrence(pickle.load(fin),
                                            num_occ_per_subgraph=args.num_occ_per_subgraph)
         else:
+            filter_pids = None
+            if args.filter_test:
+                filter_pids = set(map(itemgetter(0), 
+                    load_tsv_as_list(os.path.join(args.out_dir, 'test.prop'))))
             poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
                                              subgraph_dict=subgraph_dict,
                                              emb_set=emb_set,
@@ -82,7 +87,8 @@ if __name__ == '__main__':
                                              num_occ_per_subgraph=args.num_occ_per_subgraph,
                                              min_occ_per_prop=None,
                                              populate_method='top_down',
-                                             subtrees=subtrees)
+                                             subtrees=subtrees,
+                                             filter_pids=filter_pids)
     else:
         # min_occ_per_prop is not used because some parent property (e.g., P3342: significant person)
         # is unexpectedly small, and obviously we don't want to loss any parent properties.

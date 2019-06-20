@@ -300,6 +300,25 @@ class PropertySubtree():
         return list(self.traverse())
 
 
+    @staticmethod
+    def remove_nodes_subtree(subtree: Tuple[str, List], filter_pids: set):
+        if subtree[0] in filter_pids:
+            return None
+        remain_childs = []
+        for c in subtree[1]:
+            c = PropertySubtree.remove_nodes_subtree(c, filter_pids)
+            if c is not None:
+                remain_childs.append(c)
+        return (subtree[0], remain_childs)
+
+
+    def remove_nodes(self, filter_pids: set):
+        new_tree = PropertySubtree.remove_nodes_subtree(self.tree, filter_pids)
+        if new_tree is not None:
+            new_tree = PropertySubtree(new_tree)
+        return new_tree
+
+
     @classmethod
     def build(cls, root: str, child_dict: Dict[str, List[str]]):
         subtree = get_subtree(root, child_dict)
@@ -583,7 +602,8 @@ class PropertyOccurrence():
               min_occ_per_prop: int = None,  # property with number of occ less than this will be removed
               num_occ_per_subgraph: int = 1,
               populate_method: str = None,
-              subtrees: List[PropertySubtree] = None):
+              subtrees: List[PropertySubtree] = None,
+              filter_pids: set = None):
         pid2occs: Dict[str, List[Tuple]] = {}
         num_long_tail_prop = 0
         print('load property occurrences ...')
@@ -630,10 +650,22 @@ class PropertyOccurrence():
         elif populate_method == 'top_down':
             print('remove common childs')
             remove_common_child(subtrees)
+            if filter_pids is not None:
+                print('filter subtrees by pid to avoid "cheating" on test set')
+                print('#nodes before: {}'.format(
+                    np.sum([len(subtree.nodes) for subtree in subtrees])))
+                subtrees = [subtree.remove_nodes(filter_pids) for subtree in subtrees]
+                subtrees = [subtree for subtree in subtrees if subtree is not None]
+                print('#nodes after: {}'.format(
+                    np.sum([len(subtree.nodes) for subtree in subtrees])))
             print('populate properties top_down')
             new_pid2occs: Dict[str, set] = {}
             PropertyOccurrence.top_down_complete(pid2occs, subtrees, new_pid2occs)
-            pid2occs = dict((k, list(v)) for k, v in new_pid2occs.items())
+            pid2occs_ = dict((k, list(v)) for k, v in new_pid2occs.items())
+            if filter_pids is not None:  # the others are unchanged
+                pid2occs.update(pid2occs_)
+            else:
+                pid2occs = pid2occs_
         return cls(pid2occs, num_occ_per_subgraph=num_occ_per_subgraph)
 
 

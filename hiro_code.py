@@ -435,7 +435,7 @@ def main(args):
     wikidata_dir = Path(args.extracted_dir)
     output_dir = Path(args.output_dir)
     
-    ids = open("/home/zhengbaj/exp/wiki_domain/data/property_occurrence_all_shuf_top100k.eid", "r").read().strip().split("\n")
+    ids = open("data/property_eid/property_occurrence_all.eid", "r").read().strip().split("\n")
 
     # Make the save dir if it doesn't exist
     # if not output_dir.exists():

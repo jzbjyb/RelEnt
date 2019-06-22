@@ -119,9 +119,9 @@ def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
 
 def read_nway_file(filepath,
                    filter_prop: set = None,
-                   keep_one_per_prop: bool = False) -> List[Tuple[Tuple[str, Tuple], int]]:
+                   keep_n_per_prop: int = None) -> List[Tuple[Tuple[str, Tuple], int]]:
     result = []
-    seen_prop = set()
+    prop2count = defaultdict(lambda: 0)
     with open(filepath, 'r') as fin:
         for l in fin:
             label, poccs = l.strip().split('\t')
@@ -132,47 +132,46 @@ def read_nway_file(filepath,
             pid = poccs[0]
             if filter_prop and pid not in filter_prop:
                 continue
-            if keep_one_per_prop and pid in seen_prop:
+            if keep_n_per_prop is not None and prop2count[pid] >= keep_n_per_prop:
                 continue
-            if keep_one_per_prop:
-                seen_prop.add(pid)
+            if keep_n_per_prop is not None:
+                prop2count[pid] += 1
             result.append(((pid, occs), label))
     return result
 
 
 def read_multi_pointiwse_file(filepath,
                               filter_prop: set = None,
-                              keep_one_per_prop: bool = False) \
+                              keep_n_per_prop: int = None) \
         -> List[Tuple[Tuple[str, Tuple], Tuple[str, Tuple], int]]:
     result = []
-    seen_prop = set()
+    prop2count = defaultdict(lambda: 0)
     with open(filepath, 'r') as fin:
         for l in fin:
             label, p1o, p2o = l.strip().split('\t')
             label = int(label)
-            p1 = p1o.split(' ')
-            p2 = p2o.split(' ')
-            assert len(p1) % 2 == 1 and len(p1) % 2 == 1, 'pointwise file format error'
-            p1occs = tuple(tuple(p1[i * 2 + 1:i * 2 + 3]) for i in range((len(p1) - 1) // 2))
-            p2occs = tuple(tuple(p2[i * 2 + 1:i * 2 + 3]) for i in range((len(p2) - 1) // 2))
-            p1 = p1[0]
-            p2 = p2[0]
+            p1, p1o = p1o.split(' ', 1)
+            p2, p2o = p2o.split(' ', 1)
             if p1 == p2:
                 # pairs of two same properties should not be considered
                 # TODO: this is just a workaround. An exception should be raised
                 continue
             if filter_prop and (p1 not in filter_prop or p2 not in filter_prop):
                 continue
-            if keep_one_per_prop and (p1, p2) in seen_prop:
+            if keep_n_per_prop is not None and prop2count[(p1, p2)] >= keep_n_per_prop:
                 continue
-            if keep_one_per_prop:
-                seen_prop.add((p1, p2))
-                seen_prop.add((p2, p1))
-            if len(set(p1occs) & set(p2occs)) > 0:
+            if keep_n_per_prop is not None:
+                prop2count[(p1, p2)] += 1  # don't add (p2, p1)
+            p1o = p1o.split(' ')
+            p2o = p2o.split(' ')
+            assert len(p1o) % 2 == 0 and len(p2o) % 2 == 0, 'pointwise file format error'
+            p1o = tuple(tuple(p1o[i * 2:i * 2 + 2]) for i in range(len(p1o) // 2))
+            p2o = tuple(tuple(p2o[i * 2:i * 2 + 2]) for i in range(len(p2o) // 2))
+            if len(set(p1o) & set(p2o)) > 0:
                 # skip examples where two subgraphs overlap
                 # TODO: this is just a workaround. An exception should be raised
                 continue
-            result.append(((p1, p1occs), (p2, p2occs), label))
+            result.append(((p1, p1o), (p2, p2o), label))
     return result
 
 
@@ -301,6 +300,25 @@ class PropertySubtree():
         return list(self.traverse())
 
 
+    @staticmethod
+    def remove_nodes_subtree(subtree: Tuple[str, List], filter_pids: set):
+        if subtree[0] in filter_pids:
+            return None
+        remain_childs = []
+        for c in subtree[1]:
+            c = PropertySubtree.remove_nodes_subtree(c, filter_pids)
+            if c is not None:
+                remain_childs.append(c)
+        return (subtree[0], remain_childs)
+
+
+    def remove_nodes(self, filter_pids: set):
+        new_tree = PropertySubtree.remove_nodes_subtree(self.tree, filter_pids)
+        if new_tree is not None:
+            new_tree = PropertySubtree(new_tree)
+        return new_tree
+
+
     @classmethod
     def build(cls, root: str, child_dict: Dict[str, List[str]]):
         subtree = get_subtree(root, child_dict)
@@ -324,10 +342,15 @@ class PropertySubtree():
 
 
     @staticmethod
-    def split_within_subtree(subtree, tr, dev, te, return_parent: bool = False, filter_set: set = None):
+    def split_within_subtree(subtree, tr, dev, te,
+                             return_parent: bool = False,
+                             filter_set: set = None,
+                             allow_empty_split: bool = False):
         ''' split the subtree by spliting each tir into train/dev/test set '''
         parent = subtree[0]
         siblings = [c[0] for c in subtree[1] if filter_set is None or c[0] in filter_set]
+        if len(siblings) <= 0:  # skip leaf nodes
+            return
         shuffle(siblings)
         trs = int(len(siblings) * tr)
         devs = int(len(siblings) * dev)
@@ -335,20 +358,38 @@ class PropertySubtree():
         test_props = siblings[trs + devs:]
         dev_props = siblings[trs:trs + devs]
         train_props = siblings[:trs]
-        if len(train_props) > 0 and len(dev_props) > 0 and len(test_props) > 0 and \
-                (filter_set is None or parent in filter_set):
+        if len(train_props) <= 0 or len(dev_props) <= 0 or len(test_props) <= 0:
+            # the number of samples is really small
+            # we randomly split at this situation
+            train_props, dev_props, test_props = [], [], []
+            all_props = [train_props, dev_props, test_props]
+            choices = np.random.choice(3, len(siblings), p=[tr, dev, te])
+            for sibing, choice in zip(siblings, choices):
+                all_props[choice].append(sibing)
+        if allow_empty_split:
+            allow = len(train_props) >= 0 and len(dev_props) >= 0 and len(test_props) >= 0 and \
+                    (filter_set is None or parent in filter_set)
+        else:
+            allow = len(train_props) > 0 and len(dev_props) > 0 and len(test_props) > 0 and \
+                    (filter_set is None or parent in filter_set)
+        if allow:
             if return_parent:
                 yield parent, train_props, dev_props, test_props
             else:
                 yield train_props, dev_props, test_props
         for c in subtree[1]:
             yield from PropertySubtree.split_within_subtree(
-                c, tr, dev, te, return_parent=return_parent, filter_set=filter_set)
+                c, tr, dev, te, return_parent=return_parent, filter_set=filter_set,
+                allow_empty_split=allow_empty_split)
 
 
-    def split_within(self, tr, dev, te, return_parent: bool = False, filter_set: set = None):
+    def split_within(self, tr, dev, te,
+                     return_parent: bool = False,
+                     filter_set: set = None,
+                     allow_empty_split: bool = False):
         yield from PropertySubtree.split_within_subtree(
-            self.tree, tr, dev, te, return_parent=return_parent, filter_set=filter_set)
+            self.tree, tr, dev, te, return_parent=return_parent, filter_set=filter_set,
+            allow_empty_split=allow_empty_split)
 
 
     @staticmethod
@@ -387,6 +428,87 @@ class PropertySubtree():
               prefix: str = '') -> str:
         return '\n'.join(PropertySubtree.print_subtree(
             self.tree, id2label=id2label, defalut_label=defalut_label, prefix=prefix))
+
+
+    @staticmethod
+    def remove_by_parent_subtree(subtree: Tuple[str, List],
+                                 child2parent: Dict[str, str]):
+        ''' if a child is found in the tree but the parent is not the same, remove it (in-place) '''
+        parent = subtree[0]
+        keep = []
+        for c in subtree[1]:
+            child = c[0]
+            if child in child2parent and child2parent[child] != parent:
+                keep.append(False)
+            else:
+                keep.append(True)
+        # in-place manipulation
+        keep = [s for s, k in zip(subtree[1], keep) if k]
+        del subtree[1][:]
+        subtree[1].extend(keep)
+        for c in subtree[1]:
+            PropertySubtree.remove_by_parent_subtree(c, child2parent)
+
+
+    def remove_by_parent(self, child2parent: Dict[str, str]):
+        PropertySubtree.remove_by_parent_subtree(self.tree, child2parent)
+
+
+    @staticmethod
+    def populate_subtree(subtree: Tuple[str, List],
+                         pid2occs: Dict[str, List[Tuple]],
+                         new_pid2occs: Dict[str, set],
+                         include_self: bool = True):
+        parent, childs = subtree
+        if len(childs) == 0:  # leaf node
+            if parent in pid2occs:
+                new_pid2occs[parent] = set(pid2occs[parent])
+            return
+        for child in childs:  # none-leaf node, go deeper
+            PropertySubtree.populate_subtree(child, pid2occs, new_pid2occs, include_self=include_self)
+        # aggregate occs of childs
+        childs_occs = set()
+        for child in childs:
+            if child[0] not in new_pid2occs:
+                continue
+            childs_occs.update(new_pid2occs[child[0]])
+        if include_self and parent in pid2occs:
+            childs_occs.update(pid2occs[parent])
+        if len(childs_occs) > 0:
+            new_pid2occs[parent] = childs_occs
+
+
+    def populate(self,
+                 pid2occs: Dict[str, List[Tuple]],
+                 new_pid2occs: Dict[str, set],
+                 include_self: bool = True):
+        PropertySubtree.populate_subtree(self.tree, pid2occs, new_pid2occs, include_self=include_self)
+
+
+    @staticmethod
+    def avoid_overlap_subtree(subtree: Tuple[str, List],
+                              pid2occs: Dict[str, set],
+                              allowed: set = None):
+        parent, childs = subtree
+        if parent not in pid2occs:  # empty node
+            return
+        # remove occs not allowed
+        if allowed is not None:
+            pid2occs[parent] &= allowed
+        if len(childs) == 0:  # leaf node
+            return
+        # keep half and pass the other half to childs
+        occs = list(pid2occs[parent])
+        shuffle(occs)
+        kept = set(occs[:len(occs) // 2])
+        passed = set(occs[len(occs) // 2:])
+        pid2occs[parent] = kept
+        for child in childs:
+            PropertySubtree.avoid_overlap_subtree(child, pid2occs, allowed=passed)
+
+
+    def avoid_overlap(self, pid2occs: Dict[str, set]):
+        PropertySubtree.avoid_overlap_subtree(self.tree, pid2occs, allowed=None)
 
 
 def get_subtree(root: str, child_dict: Dict[str, List[str]]) -> Tuple[str, List[Tuple[str, List]]]:
@@ -438,6 +560,29 @@ def get_is_ancestor(subtrees: List[PropertySubtree]):
     return is_ancestor
 
 
+def remove_common_child(subtrees: List[PropertySubtree]):
+    ''' if a property has more than one parents, only keep the deepest one '''
+    chid2parents: Dict[str, Dict] = defaultdict(lambda: {})
+    for subtree in subtrees:
+        for child, ancestors in subtree.traverse(return_ancestors=True):
+            if len(ancestors) <= 0:  # skip root
+                continue
+            depth = len(ancestors)
+            parent = ancestors[-1]
+            if parent in chid2parents[child]:
+                # this is cause by a non-leaf property with multiple different parents
+                continue
+            chid2parents[child][parent] = depth
+    chid2parents = dict((k, v) for k, v in chid2parents.items() if len(v) > 1)
+    print('{} childs have multiple parents'.format(len(chid2parents)))
+    # find the deepest parent
+    chid2parents: Dict[str, str] = dict((k, sorted(v.items(), key=lambda x: -x[1])[0][0])
+                                        for k, v in chid2parents.items())
+    # remove childs with other parents (in-place)
+    for subtree in subtrees:
+        subtree.remove_by_parent(chid2parents)
+
+
 class PropertyOccurrence():
     def __init__(self,
                  pid2occs: Dict[str, List[Tuple]],
@@ -457,7 +602,8 @@ class PropertyOccurrence():
               min_occ_per_prop: int = None,  # property with number of occ less than this will be removed
               num_occ_per_subgraph: int = 1,
               populate_method: str = None,
-              subtrees: List[PropertySubtree] = None):
+              subtrees: List[PropertySubtree] = None,
+              filter_pids: set = None):
         pid2occs: Dict[str, List[Tuple]] = {}
         num_long_tail_prop = 0
         print('load property occurrences ...')
@@ -487,28 +633,51 @@ class PropertyOccurrence():
         if min_occ_per_prop is not None:
             print('remove {} long tail properties with threshold {}'.format(
                 num_long_tail_prop, min_occ_per_prop))
-        if populate_method is not None:
-            print('populate properties recursively')
+        if populate_method is None:
+            return cls(pid2occs, num_occ_per_subgraph=num_occ_per_subgraph)
+        assert populate_method in {'bottom_up', 'top_down'}
+        if populate_method == 'bottom_up':
+            print('populate properties bottom_up')
             # TODO: if parent property is the union of child property, and subgraph is unmodified,
             #   the model can cheat.
             # TODO: An idea case is that when building train subgraph, dev and test
             #   properties are removed.
             new_pid2occs: Dict[str, set] = {}
             for subtree in tqdm(subtrees):
-                PropertyOccurrence.recursive_complete(
-                    pid2occs, subtree.tree, new_pid2occs, populate_method=populate_method)
+                PropertyOccurrence.bottom_up_complete(
+                    pid2occs, subtree.tree, new_pid2occs, populate_method='combine_child')
             pid2occs = dict((k, list(v)) for k, v in new_pid2occs.items())
+        elif populate_method == 'top_down':
+            print('remove common childs')
+            remove_common_child(subtrees)
+            if filter_pids is not None:
+                print('filter subtrees by pid to avoid "cheating" on test set')
+                print('#nodes before: {}'.format(
+                    np.sum([len(subtree.nodes) for subtree in subtrees])))
+                subtrees = [subtree.remove_nodes(filter_pids) for subtree in subtrees]
+                subtrees = [subtree for subtree in subtrees if subtree is not None]
+                print('#nodes after: {}'.format(
+                    np.sum([len(subtree.nodes) for subtree in subtrees])))
+            print('populate properties top_down')
+            new_pid2occs: Dict[str, set] = {}
+            PropertyOccurrence.top_down_complete(pid2occs, subtrees, new_pid2occs)
+            pid2occs_ = dict((k, list(v)) for k, v in new_pid2occs.items())
+            if filter_pids is not None:  # the others are unchanged
+                pid2occs.update(pid2occs_)
+            else:
+                pid2occs = pid2occs_
         return cls(pid2occs, num_occ_per_subgraph=num_occ_per_subgraph)
 
 
     @staticmethod
-    def recursive_complete(pid2occs: Dict[str, List[Tuple]],
+    def bottom_up_complete(pid2occs: Dict[str, List[Tuple]],
                            subtree: Tuple[str, List],
                            new_pid2occs: Dict[str, set],
                            populate_method: str = 'combine_child'):
         # in all these populate_method, overlap should be avoided
         # 'combine_child': occs of a property is the union of all its children
         # 'combine_child_and_self': occs of a property is the union of all its children and itself
+        assert populate_method in {'combine_child', 'combine_child_and_self'}
         parent, childs = subtree
         if parent in new_pid2occs:  # has been processed
             return
@@ -517,7 +686,7 @@ class PropertyOccurrence():
                 new_pid2occs[parent] = set(pid2occs[parent])
             return
         for child in childs:  # none-leaf node, go deeper
-            PropertyOccurrence.recursive_complete(
+            PropertyOccurrence.bottom_up_complete(
                 pid2occs, child, new_pid2occs, populate_method=populate_method)
         # populate current property using children
         if populate_method in {'combine_child', 'combine_child_and_self'}:
@@ -546,6 +715,23 @@ class PropertyOccurrence():
             raise NotImplementedError
 
 
+    @staticmethod
+    def top_down_complete(pid2occs: Dict[str, List[Tuple]],
+                          subtrees: List[PropertySubtree],
+                          new_pid2occs: Dict[str, set]):
+        # first collect all the occurrences from the bottom to the top
+        # then avoid overlap in a top down manner so that
+        # all the ancestors have no overlap with a certain child
+
+        # bottom-up collection
+        for subtree in subtrees:
+            subtree.populate(pid2occs, new_pid2occs, include_self=True)
+
+        # top-down overlap removing
+        for subtree in subtrees:
+            subtree.avoid_overlap(new_pid2occs)
+
+
     @property
     def pids(self) -> List[str]:
         return list(self.pid2occs.keys())
@@ -572,8 +758,12 @@ class PropertyOccurrence():
                       num_sample: int,
                       sam_for_pid1: int = 1,
                       sam_for_pid2: int = 1) -> Iterable[Tuple[List, List]]:
+        if pid1 not in self._pid2multioccs or pid2 not in self._pid2multioccs:
+            return
         p1occs = self._pid2multioccs[pid1]
         p2occs = self._pid2multioccs[pid2]
+        if len(p1occs) <= 0 or len(p2occs) <= 0:
+            return
 
         sam_prob = min(1, num_sample / (len(p1occs) * len(p2occs)))
 

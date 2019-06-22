@@ -1,11 +1,12 @@
 from typing import Dict, Tuple
 import functools, os
 import pickle
-from collections import OrderedDict, Callable
+from collections import OrderedDict, Callable, defaultdict
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 from allennlp.modules.token_embedders.embedding import EmbeddingsTextFile
+from .constant import PADDING
 
 
 def load_tsv_as_dict(filepath, keyfunc=lambda x:x, valuefunc=lambda x:x):
@@ -167,16 +168,19 @@ def load_embedding(filepath, debug=False, emb_size=None) -> Tuple[Dict[str, int]
 def read_embeddings_from_text_file(filepath: str,
                                    debug: bool = False,
                                    emb_size: int = None,
-                                   first_line: bool = False) -> Tuple[Dict[str, int], np.ndarray]:
+                                   first_line: bool = False,
+                                   use_padding: bool = False) -> Tuple[Dict[str, int], np.ndarray]:
     print('load emb from {} ...'.format(filepath))
-    id2ind = {}
+    id2ind = defaultdict(lambda: len(id2ind))
     emb = []
+    if use_padding:  # put padding at the first position
+        _ = id2ind[PADDING]
     with EmbeddingsTextFile(filepath) as embeddings_file:
         if first_line:
             embeddings_file.readline()
         for i, line in tqdm(enumerate(embeddings_file)):
             token = line.split('\t', 1)[0]
-            id2ind[token] = i
+            _ = id2ind[token]
             if debug:
                 emb.append([0.1] * emb_size)
             else:
@@ -184,7 +188,12 @@ def read_embeddings_from_text_file(filepath: str,
                 if emb_size and len(l) != emb_size:
                     raise ValueError('emb dim incorrect')
                 emb.append(l)
-    return id2ind, np.array(emb, dtype=np.float32)
+    if use_padding:  # put padding at the first position
+        if emb_size:
+            emb.insert(0, [0] * emb_size)
+        else:
+            emb.insert(0, [0] * len(emb[0]))
+    return dict(id2ind), np.array(emb, dtype=np.float32)
 
 
 def filer_embedding(in_filepath: str,

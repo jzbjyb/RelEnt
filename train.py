@@ -10,11 +10,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, RandomSampler
-from wikiutil.data import PointwiseDataset, NwayDataset, PointwisemergeDataset
+from wikiutil.data import PointwiseDataset, NwayDataset, PointwisemergeDataset, BowDataset
 from wikiutil.util import filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
-from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise
-from wikiutil.property import read_prop_file, read_subgraph_file
-from wikiutil.constant import AGG_NODE, AGG_PROP
+from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise, rank_to_csv
+from wikiutil.property import read_prop_file, read_subgraph_file, read_subprop_file
+from wikiutil.constant import AGG_NODE, AGG_PROP, PADDING
 from analogy.ggnn import GatedGraphNeuralNetwork
 
 
@@ -29,16 +29,23 @@ class Model(nn.Module):
                  hidden_size: int = 64,
                  method: str = 'ggnn',
                  num_edge_types: int = 1,
-                 layer_timesteps: List[int] = [3, 3]):
+                 layer_timesteps: List[int] = [3, 3],
+                 match: str = 'concat'):
         super(Model, self).__init__()
-        assert method in {'ggnn', 'emb', 'cosine'}
+        assert method in {'ggnn', 'emb', 'cosine', 'bow'}
         self.method = method
+        assert match in {'concat', 'cosine'}
+        # 'concat': embeddings of two relations are concatenated to make prediction
+        # 'cosine': embeddings of two relations are compared by cosine similarity
+        self.match = match
         self.num_class = num_class
         self.num_graph = num_graph
         # get embedding
+        self.padding_ind = padding_ind
         if emb is not None:  # init from pre-trained
             vocab_size, emb_size = emb.shape
-            self.emb = nn.Embedding.from_pretrained(torch.tensor(emb).float(), freeze=True)
+            self.emb = nn.Embedding.from_pretrained(
+                torch.tensor(emb).float(), freeze=True, padding_idx=padding_ind)
         else:  # random init
             self.emb = nn.Embedding(vocab_size, emb_size, padding_idx=padding_ind)
 
@@ -46,7 +53,8 @@ class Model(nn.Module):
         self.emb_proj = nn.Linear(emb_size, hidden_size)
         self.gnn = GatedGraphNeuralNetwork(hidden_size=hidden_size, num_edge_types=num_edge_types,
                                            layer_timesteps=layer_timesteps, residual_connections={})
-        self.cosine_cla = nn.Linear(1, 1)
+        self.cosine_bias = nn.Parameter(torch.zeros(1))
+        self.cosine_cla = lambda x: x + self.cosine_bias
 
         self.cla = nn.Sequential(
             nn.Dropout(p=0.0),
@@ -56,30 +64,36 @@ class Model(nn.Module):
             nn.Linear(16, num_class)
         )
 
-
     def forward(self, data: Dict, labels: torch.LongTensor):
         ge_list = []
         for i in range(self.num_graph):
             # get representation
             ge = self.emb(data['emb_ind'][i])
-            if self.method != 'cosine':
-                ge = self.emb_proj(ge)
-            if self.method == 'ggnn':
-                gnn = self.gnn.compute_node_representations(
-                    initial_node_representation=ge, adjacency_lists=data['adj'][i])
-                # TODO: combine ggnn and emb
-                #ge = 0.5 * ge + 0.5 * gnn
-                ge = gnn
-            # select
-            # SHAPE: (batch_size, emb_size)
-            ge = torch.index_select(ge, 0, data['prop_ind'][i])
+            if self.method == 'bow':
+                # average using stat
+                # SHAPE: (batch_size, emb_size)
+                ge = (data['stat'][i].unsqueeze(-1) * ge).sum(1)  # TODO: add bias?
+                #ge /= data['emb_ind'][i].ne(self.padding_ind).sum(-1).float().unsqueeze(-1)
+                ge = F.relu(ge)
+            else:
+                if self.method != 'cosine':
+                    ge = self.emb_proj(ge)
+                if self.method == 'ggnn':
+                    gnn = self.gnn.compute_node_representations(
+                        initial_node_representation=ge, adjacency_lists=data['adj'][i])
+                    # TODO: combine ggnn and emb
+                    #ge = 0.5 * ge + 0.5 * gnn
+                    ge = gnn
+                # SHAPE: (batch_size, emb_size)
+                ge = torch.index_select(ge, 0, data['prop_ind'][i])  # select property emb
             ge_list.append(ge)
         # match
-        if self.method == 'cosine':
-            ge = self.cosine_cla(F.cosine_similarity(ge_list[0], ge_list[1]).unsqueeze(-1))
-        else:
+        if self.match == 'concat':
             ge = torch.cat(ge_list, -1)
             ge = self.cla(ge)
+        elif self.match == 'cosine':
+            ge = self.cosine_cla(F.cosine_similarity(ge_list[0], ge_list[1]).unsqueeze(-1))
+
         if self.num_class == 1:
             # binary classification loss
             logits = torch.sigmoid(ge)
@@ -112,7 +126,9 @@ def one_epoch(args, split, dataloader, optimizer, device, show_progress=True):
             optimizer.step()
 
         loss_li.append(loss.item())
-        if args.dataset_format == 'pointwise' or args.dataset_format == 'pointwisemerge':
+        if args.dataset_format == 'pointwise' or \
+                args.dataset_format == 'pointwisemerge' or \
+                args.dataset_format == 'bow':
             pred_li.extend([(pid1, pid2, logits[i].item(), label[i].item())
                             for i, (pid1, pid2) in
                             enumerate(zip(batch[0]['meta']['pid1'], batch[0]['meta']['pid2']))])
@@ -128,7 +144,7 @@ def one_epoch(args, split, dataloader, optimizer, device, show_progress=True):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('train analogy model')
     parser.add_argument('--dataset_dir', type=str, required=True, help='dataset dir')
-    parser.add_argument('--dataset_format', type=str, choices=['pointwise', 'nway', 'pointwisemerge'],
+    parser.add_argument('--dataset_format', type=str, choices=['pointwise', 'nway', 'pointwisemerge', 'bow'],
                         default='pointwise', help='dataset format')
     parser.add_argument('--subgraph_file', type=str, required=True, help='entity subgraph file')
     parser.add_argument('--subprop_file', type=str, required=True, help='subprop file')
@@ -144,9 +160,14 @@ if __name__ == '__main__':
     parser.add_argument('--show_progress', action='store_true', help='whether to show training progress')
 
     parser.add_argument('--method', type=str, default='emb', help='which model to use')
+    parser.add_argument('--match', type=str, default='concat', help='how to match two embeddings')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--lr', type=float, default=None, help='learning rate')
     parser.add_argument('--edge_type', type=str, default='only_property', help='how to form the graph')
+    parser.add_argument('--neg_ratio', type=int, default=None,
+                        help='how many negative example to draw per positive example')
+    parser.add_argument('--keep_n_per_prop', type=str, default=None,
+                        help='how many occurrences to keep per property (pair). used when dataset is too large')
 
     args = parser.parse_args()
 
@@ -163,19 +184,24 @@ if __name__ == '__main__':
 
     # configs
     method = args.method
-    lr = {'emb': 0.005, 'ggnn': 0.0001, 'cosine': 0.005}[method]
+    lr = {'emb': 0.005, 'ggnn': 0.0001, 'cosine': 0.005, 'bow': 0.0001}[method]
     if args.lr is not None:
         lr = args.lr
     debug = False
-    keep_one_per_prop = {'emb': True, 'ggnn': False, 'cosine': True}[method]
+    keep_n_per_prop = {'emb': 1, 'ggnn': None, 'cosine': 1, 'bow': None}[method]
+    if args.keep_n_per_prop is None:
+        train_keep_n_per_prop = keep_n_per_prop
+        dt_keep_n_per_prop = keep_n_per_prop
+    else:
+        train_keep_n_per_prop, dt_keep_n_per_prop = list(map(int, args.keep_n_per_prop.split(':')))
     use_cache = False
     use_pseudo_property = False
     show_progress = args.show_progress
     edge_type = args.edge_type
     num_workers = args.num_workers
     batch_size = args.batch_size
-    num_class_dict = {'nway': 16, 'pointwise': 1, 'pointwisemerge': 1}
-    num_graph_dict = {'nway': 1, 'pointwise': 2, 'pointwisemerge': 1}
+    num_class_dict = {'nway': 16, 'pointwise': 1, 'pointwisemerge': 1, 'bow': 1}
+    num_graph_dict = {'nway': 1, 'pointwise': 2, 'pointwisemerge': 1, 'bow': 2}
     layer_timesteps = [3, 3]
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
     get_dataset_filepath = lambda split, preped=False: os.path.join(
@@ -186,6 +212,10 @@ if __name__ == '__main__':
         accuracy = accuracy_nway
     else:
         accuracy = accuracy_pointwise
+
+    # load properties
+    subprops = read_subprop_file(args.subprop_file)
+    pid2plabel = dict(p[0] for p in subprops)
 
     # load subgraph
     if args.preped:
@@ -214,7 +244,8 @@ if __name__ == '__main__':
         exit(1)
 
     # load embedding
-    emb_id2ind, emb = read_embeddings_from_text_file(args.emb_file, debug=debug, emb_size=200) \
+    emb_id2ind, emb = read_embeddings_from_text_file(
+        args.emb_file, debug=debug, emb_size=200, use_padding=True) \
         if args.emb_file else (None, None)
     #properties_as_relations = {'P31', 'P21', 'P527', 'P17'}  # for debug
     properties_as_relations = load_tsv_as_dict(os.path.join(args.dataset_dir, 'pid2ind.tsv'), valuefunc=int)
@@ -230,7 +261,7 @@ if __name__ == '__main__':
     elif edge_type == 'property':
         num_edge_types = len(properties_as_relations)
     elif edge_type == 'bow':
-        num_edge_types = 1
+        num_edge_types = 2  # head and tail
     else:
         raise NotImplementedError
     if args.dataset_format == 'pointwisemerge':
@@ -241,8 +272,8 @@ if __name__ == '__main__':
         'subgraph_dict': subgraph_dict,
         'properties_as_relations': properties_as_relations,
         'emb_id2ind': emb_id2ind,
+        'padding': PADDING,
         'edge_type': edge_type,
-        'keep_one_per_prop': keep_one_per_prop,
         'use_cache': use_cache,
         'use_pseudo_property': use_pseudo_property,
         'use_top': True,  # TODO: set using external params
@@ -252,18 +283,26 @@ if __name__ == '__main__':
                    num_workers=num_workers, collate_fn=ds.collate_fn)
 
     if issubclass(Dataset, PointwiseDataset):
-        # TODO: set neg_ratio
-        train_data = Dataset(get_dataset_filepath('train', args.preped), **dataset_params, neg_ratio=None)
+        train_data = Dataset(get_dataset_filepath('train', args.preped),
+                             **dataset_params,
+                             neg_ratio=args.neg_ratio,
+                             keep_n_per_prop=train_keep_n_per_prop)
     else:
-        train_data = Dataset(get_dataset_filepath('train', args.preped), **dataset_params)
+        train_data = Dataset(get_dataset_filepath('train', args.preped),
+                             **dataset_params,
+                             keep_n_per_prop=train_keep_n_per_prop)
     if method == 'emb' or method == 'cosine':
         train_dataloader = get_dataloader(train_data, True)
     else:
         train_dataloader = get_dataloader(
             train_data, False, RandomSampler(train_data, replacement=True, num_samples=50000))
-    dev_data = Dataset(get_dataset_filepath('dev', args.preped), **dataset_params)
+    dev_data = Dataset(get_dataset_filepath('dev', args.preped),
+                       **dataset_params,
+                       keep_n_per_prop=dt_keep_n_per_prop)
     dev_dataloader = get_dataloader(dev_data, False)
-    test_data = Dataset(get_dataset_filepath('test', args.preped), **dataset_params)
+    test_data = Dataset(get_dataset_filepath('test', args.preped),
+                        **dataset_params,
+                        keep_n_per_prop=dt_keep_n_per_prop)
     test_dataloader = get_dataloader(test_data, False)
 
     if args.prep_data:
@@ -277,13 +316,26 @@ if __name__ == '__main__':
         exit(1)
 
     # config model, optimizer and evaluation
-    model = Model(num_class=num_class_dict[args.dataset_format],
-                  num_graph=num_graph_dict[args.dataset_format],
-                  emb=emb,
-                  hidden_size=64,
-                  method=method,
-                  num_edge_types=num_edge_types,
-                  layer_timesteps=layer_timesteps)
+    if method == 'bow':
+        model = Model(num_class=num_class_dict[args.dataset_format],  # number of classes for prediction
+                      num_graph=num_graph_dict[args.dataset_format],  # number of graphs in data dict
+                      emb_size=64,
+                      vocab_size=len(emb_id2ind),
+                      padding_ind=0,
+                      emb=None,
+                      hidden_size=64,
+                      method='bow',
+                      match=args.match)
+    else:
+        model = Model(num_class=num_class_dict[args.dataset_format],
+                      num_graph=num_graph_dict[args.dataset_format],
+                      emb=emb,
+                      padding_ind=0,  # the first position is padding embedding
+                      hidden_size=64,
+                      method=method,
+                      num_edge_types=num_edge_types,
+                      layer_timesteps=layer_timesteps,
+                      match=args.match)
     if args.load:
         print('load model from {}'.format(args.load))
         model.load_state_dict(torch.load(args.load))
@@ -300,6 +352,9 @@ if __name__ == '__main__':
 
     # train and test
     pat, best_dev_metric = 0, 0
+    eval_agg = 'max'
+    if args.save and not os.path.exists(args.save):
+        os.mkdir(args.save)
     for epoch in range(300):
         # init performance
         if epoch == 0:
@@ -307,7 +362,7 @@ if __name__ == '__main__':
                                            device=device, show_progress=show_progress)
             print('init')
             #print(np.mean(dev_loss), dev_metric.eval(dev_pred))
-            print(np.mean(dev_loss), accuracy(dev_pred, agg='max'))
+            print(np.mean(dev_loss), accuracy(dev_pred, agg=eval_agg)[0])
 
         # train, dev, test
         train_pred, train_loss = one_epoch(args, 'train', train_dataloader, optimizer,
@@ -318,8 +373,9 @@ if __name__ == '__main__':
                                          device=device, show_progress=show_progress)
 
         # evaluate
-        train_metric, dev_metric, test_metric = \
-            accuracy(train_pred, agg='max'), accuracy(dev_pred, agg='max'), accuracy(test_pred, agg='max')
+        train_metric, _ = accuracy(train_pred, agg=eval_agg)
+        dev_metric, _ = accuracy(dev_pred, agg=eval_agg)
+        test_metric, test_ranks = accuracy(test_pred, agg=eval_agg)
         print('epoch {:4d}\ttr_loss: {:>.3f}\tdev_loss: {:>.3f}\tte_loss: {:>.3f}'.format(
             epoch + 1, np.mean(train_loss), np.mean(dev_loss), np.mean(test_loss)), end='')
         print('\t\ttr_acc: {:>.3f}\tdev_acc: {:>.3f}\ttest_acc: {:>.3f}'.format(
@@ -345,4 +401,5 @@ if __name__ == '__main__':
                 best_dev_metric = dev_metric
                 if args.save:
                     # save epoch with best dev metric
-                    torch.save(model.state_dict(), args.save)
+                    torch.save(model.state_dict(), os.path.join(args.save, 'model.bin'))
+                    rank_to_csv(test_ranks, os.path.join(args.save, 'ranks.csv'), key2name=pid2plabel)

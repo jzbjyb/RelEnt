@@ -4,12 +4,12 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data/analogy_dataset/by_entail_622_subgraph10_ancestor5_sample100_maxoccperprop10k
+data_dir=data/analogy_dataset/by_entail_622_maxoccperprop10k_overlap_withouttest/
 data_format=pointwise
 subgraph_file=data/subgraph/property_occurrence_all_shuf_top100k.subgraph
 #subgraph_file=data/property_occurrence_subtree.subgraph
 prop_dir=data/property_occurrence_all_shuf_top100k
-method=by_entail
+method=by_entail-overlap
 
 mkdir -p ${data_dir}
 
@@ -25,7 +25,10 @@ python prep_data.py \
     --num_occ_per_subgraph 10 \
     --num_sample 100 \
     --contain_train \
-    --load_split
+    --allow_empty_split \
+    --property_population \
+    --load_split \
+    --filter_test
 
 python train.py \
     --dataset_dir ${data_dir} \

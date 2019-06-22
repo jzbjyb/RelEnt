@@ -6,7 +6,8 @@
     - get subproperty: `wdtaxonomy P361`
 - https://tools.wmflabs.org/prop-explorer/
     - A tree structure constructed by "subclass of" (P279) or "subproperty of" (P1647).
-    
+- https://github.com/lucaswerkmeister/wikidata-ontology-exploreradd 
+
 ## Build sub-graph
 
 - [Wikidata Graph Builder](https://angryloki.github.io/wikidata-graph-builder/)

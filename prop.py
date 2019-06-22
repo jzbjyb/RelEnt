@@ -6,6 +6,8 @@ import argparse, json, os, time
 from collections import defaultdict
 from tqdm import tqdm
 import numpy as np
+from pathlib import Path
+from copy import deepcopy
 from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, \
     hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file, PropertyOccurrence, read_subgraph_file
 from wikiutil.util import read_emb_ids
@@ -256,13 +258,150 @@ def wikidata_populate(args):
                     hash_set.add(st)
 
 
+def filter_ontology(args):
+    wikidata_dir = Path(args.inp)
+    count = 0
+    with (wikidata_dir / f'triples.txt').open('r') as fin, open(args.out, 'w') as fout:
+        for lc, line in tqdm(enumerate(fin), ncols=80, desc='Preparing triples', total=270306417):
+            subj, rel, obj = line.strip().split('\t')
+            if rel != 'P279' and rel != 'P31':  # only focus on "subclass of" and "instance of"
+                continue
+            count += 1
+            fout.write(line)
+    print('total number of triples involving subclass of: {}'.format(count))
+
+
+def build_ontology(args, top_level=2):
+    adjs = []
+    id2ind = defaultdict(lambda: len(id2ind))
+    parent2chids = defaultdict(lambda: [])
+    child2parents = defaultdict(lambda: [])
+    instof = defaultdict(lambda: [])
+    all_inst = set()
+    with open(args.inp, 'r') as fin:
+        for i, l in tqdm(enumerate(fin)):
+            subj, rel, obj = l.strip().split('\t')
+            if rel == 'P279':
+                adjs.append((id2ind[subj], id2ind[obj]))
+                parent2chids[obj].append(subj)
+                child2parents[subj].append(obj)
+            elif rel == 'P31':
+                instof[subj].append(obj)
+                all_inst.add(obj)
+    print('totally {} entities'.format(len(id2ind)))
+    roots = set(id2ind.keys()) - set(child2parents.keys())
+    leaves = set(id2ind.keys()) - set(parent2chids.keys())
+    print('totally {} roots, {} leaves'.format(len(roots), len(leaves)))
+    print('collect all top {} level nodes ...'.format(top_level))
+    top_nodes = set()
+    root2count = {}
+    for root in roots:
+        went = dfs_collect(root, parent2chids, depth=top_level)
+        reduce_top_level = top_level
+        # a heuristic to restrict the number of entities
+        # (several biomed-related roots have large number of childrens)
+        while len(went) >= 1000:
+            reduce_top_level -= 1
+            went = dfs_collect(root, parent2chids, depth=reduce_top_level)
+        top_nodes.add(root)
+        top_nodes.update(went)
+        root2count[root] = len(went)
+    print(sorted(root2count.items(), key=lambda x: -x[1])[:20])
+    print('{} top-level nodes collected'.format(len(top_nodes)))
+    print('find the nearest top node for each node in the ontology ...')
+    node2dest: Dict[str, Tuple] = {}
+    for leaf in tqdm(leaves):
+        dfs_find(leaf, child2parents, destination=top_nodes, node2dest=node2dest, hist=set())
+    for top_node in top_nodes:  # add top nodes
+        node2dest[top_node] = (top_node, 0)
+    all_subclass = set(node2dest.keys())
+    not_attached = 0
+    node2dest_inst: Dict[str, Tuple] = {}
+    for inst in tqdm(all_inst):  # add instances
+        # return first reached node in all_subclass or the top node
+        node, find = dfs_find_quick(inst, instof, all_subclass, node2dest_inst, hist=set())
+        if find:
+            node2dest[inst] = node2dest[node]
+        else:
+            not_attached += 1
+            node2dest[inst] = (node, -1)
+    print('{} instance not attached on subclass'.format(not_attached))
+    #assert len(node2dest) == len(id2ind), 'not all nodes are visited'
+    with open(args.out, 'w') as fout:
+        for node, (dest, depth) in node2dest.items():
+            fout.write('{}\t{}\t{}\n'.format(node, dest, depth))
+
+
+def dfs_find_quick(root, path: Dict[str, List], destination: set, node2dest: Dict[str, Tuple], hist=set()):
+    if root in node2dest:
+        return node2dest[root]
+    if root in hist:  # cycle
+        return root, False
+    if root in destination:
+        node2dest[root] = (root, True)
+        return root, True
+    if root not in path:
+        node2dest[root] = (root, False)
+        return root, False
+    else:
+        new_hist = deepcopy(hist)
+        new_hist.add(root)
+        for c in path[root]:
+            node, find = dfs_find_quick(c, path, destination, node2dest, hist=new_hist)
+            if find:
+                node2dest[root] = (node, find)
+                return node, find
+        node2dest[root] = (node, False)
+        return node, False
+
+
+def dfs_find(root, path: Dict[str, List], destination: set, node2dest: Dict[str, Tuple], hist=set()):
+    is_dest = False
+    if root in hist:  # cycle
+        return None, None
+    if root in node2dest:
+        return node2dest[root]
+    if root in destination:
+        is_dest = True  # still need go deeper, so don't return here
+    if root not in path and not is_dest:
+        raise Exception('cannot find destination for {}'.format(root))
+    nearest_dep, nearest_dest = 10000, None
+    next_hist = deepcopy(hist)
+    next_hist.add(root)
+    for c in path[root]:
+        if c in node2dest:
+            dest, dep = node2dest[c]  # avoid multiple visiting
+        else:
+            dest, dep = dfs_find(c, path, destination, node2dest, hist=next_hist)
+        if dest is not None and dep < nearest_dep:
+            nearest_dep = dep
+            nearest_dest = dest
+    if is_dest:
+        node2dest[root] = (root, 0)
+        return root, 0
+    if nearest_dest is None:
+        return None, None
+    node2dest[root] = (nearest_dest, nearest_dep + 1)
+    return nearest_dest, nearest_dep + 1
+
+
+def dfs_collect(root, path: Dict[str, List], depth=1) -> set:
+    if depth <= 0 or root not in path:
+        return {}
+    went = set()
+    for c in path[root]:
+        went.add(c)
+        went.update(dfs_collect(c, path, depth=depth-1))
+    return went
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
                         choices=['subprop', 'build_tree', 'prop_occur_only',
                                  'prop_occur', 'prop_occur_all', 'prop_entities',
                                  'hiro_to_subgraph', 'prop_occur_ana',
-                                 'wikidata_populate'], required=True)
+                                 'wikidata_populate', 'filter_ontology', 'build_ontology'], required=True)
     parser.add_argument('--inp', type=str, required=True)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -301,3 +440,9 @@ if __name__ == '__main__':
     elif args.task == 'wikidata_populate':
         # populate wikidata by assuming all the parents properties holds for a triple
         wikidata_populate(args)
+    elif args.task == 'filter_ontology':
+        # filter wikidata triple file to keep only "subclass of" (P279) and "instance of" (P31)
+        filter_ontology(args)
+    elif args.task == 'build_ontology':
+        # build ontology using the triples
+        build_ontology(args, top_level=2)

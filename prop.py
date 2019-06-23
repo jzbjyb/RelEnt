@@ -368,14 +368,15 @@ def dfs_find(root, path: Dict[str, List], destination: set, node2dest: Dict[str,
     nearest_dep, nearest_dest = 10000, None
     next_hist = deepcopy(hist)
     next_hist.add(root)
-    for c in path[root]:
-        if c in node2dest:
-            dest, dep = node2dest[c]  # avoid multiple visiting
-        else:
-            dest, dep = dfs_find(c, path, destination, node2dest, hist=next_hist)
-        if dest is not None and dep < nearest_dep:
-            nearest_dep = dep
-            nearest_dest = dest
+    if root in path:
+        for c in path[root]:
+            if c in node2dest:
+                dest, dep = node2dest[c]  # avoid multiple visiting
+            else:
+                dest, dep = dfs_find(c, path, destination, node2dest, hist=next_hist)
+            if dest is not None and dep < nearest_dep:
+                nearest_dep = dep
+                nearest_dest = dest
     if is_dest:
         node2dest[root] = (root, 0)
         return root, 0

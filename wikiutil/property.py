@@ -300,6 +300,12 @@ class PropertySubtree():
         return list(self.traverse())
 
 
+    @property
+    def leaves(self):
+        return list(PropertySubtree.traverse_subtree(
+            self.tree, ancestors=[], return_ancestors=False, only_leaves=True))
+
+
     @staticmethod
     def remove_nodes_subtree(subtree: Tuple[str, List], filter_pids: set):
         if subtree[0] in filter_pids:
@@ -326,19 +332,22 @@ class PropertySubtree():
 
 
     @staticmethod
-    def traverse_subtree(subtree, ancestors=[], return_ancestors=False):
-        if return_ancestors:
-            yield subtree[0], ancestors
-        else:
-            yield subtree[0]
+    def traverse_subtree(subtree, ancestors=[], return_ancestors=False, only_leaves=False):
+        if not only_leaves or len(subtree[1]) <= 0:
+            if return_ancestors:
+                yield subtree[0], ancestors
+            else:
+                yield subtree[0]
         na: List[str] = deepcopy(ancestors)
         na.append(subtree[0])
         for c in subtree[1]:
-            yield from PropertySubtree.traverse_subtree(c, ancestors=na, return_ancestors=return_ancestors)
+            yield from PropertySubtree.traverse_subtree(
+                c, ancestors=na, return_ancestors=return_ancestors, only_leaves=only_leaves)
 
 
-    def traverse(self, return_ancestors=False):
-        yield from PropertySubtree.traverse_subtree(self.tree, ancestors=[], return_ancestors=return_ancestors)
+    def traverse(self, return_ancestors=False, only_leaves=False):
+        yield from PropertySubtree.traverse_subtree(
+            self.tree, ancestors=[], return_ancestors=return_ancestors, only_leaves=only_leaves)
 
 
     @staticmethod

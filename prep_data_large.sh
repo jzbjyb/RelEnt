@@ -4,7 +4,7 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data/analogy_dataset/by_entail_622_maxoccperprop10k_overlap_withouttest/
+data_dir=data/analogy_dataset/easy_sibling_overlap
 data_format=pointwise
 subgraph_file=data/subgraph/property_occurrence_all_shuf_top100k.subgraph
 #subgraph_file=data/property_occurrence_subtree.subgraph

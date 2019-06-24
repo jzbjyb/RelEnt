@@ -22,6 +22,8 @@ def load_tsv_as_list(filepath):
     result = []
     with open(filepath, 'r') as fin:
         for l in fin:
+            if l.strip() == '':
+                continue
             l = l.strip().split('\t')
             result.append(l)
     return result

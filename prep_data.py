@@ -78,8 +78,11 @@ if __name__ == '__main__':
         else:
             filter_pids = None
             if args.filter_test:
+                # filter both dev and test properites
                 filter_pids = set(map(itemgetter(0), 
                     load_tsv_as_list(os.path.join(args.out_dir, 'test.prop'))))
+                filter_pids |= set(map(itemgetter(0),
+                    load_tsv_as_list(os.path.join(args.out_dir, 'dev.prop'))))
             poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
                                              subgraph_dict=subgraph_dict,
                                              emb_set=emb_set,

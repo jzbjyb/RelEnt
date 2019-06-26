@@ -13,6 +13,8 @@ def load_tsv_as_dict(filepath, keyfunc=lambda x:x, valuefunc=lambda x:x):
     result = {}
     with open(filepath, 'r') as fin:
         for l in fin:
+            if l.strip() == '':
+                continue
             l = l.strip().split('\t')
             result[keyfunc(l[0])] = valuefunc(l[1])
     return result

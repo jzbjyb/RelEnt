@@ -434,8 +434,9 @@ def main(args):
     wikitext_dir = Path(args.wikitext_dir)
     wikidata_dir = Path(args.extracted_dir)
     output_dir = Path(args.output_dir)
+
     
-    ids = open("data/property_eid/property_occurrence_all.eid", "r").read().strip().split("\n")
+    ids = open(args.eid_file, "r").read().strip().split("\n")
 
     # Make the save dir if it doesn't exist
     # if not output_dir.exists():
@@ -481,7 +482,7 @@ def main(args):
 
     # Harvest neighbors.
     id2nb: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
-    with (wikidata_dir / f"triples.txt").open("r") as f:
+    with open(args.triple_file, "r") as f:
         for lc, line in tqdm.tqdm(enumerate(f), ncols=80, desc="Preparing triples", ascii=True, total=270306417):
             #if lc > 10000:
             #    break
@@ -553,6 +554,8 @@ if __name__ == "__main__":
     parser.add_argument("--wikitext-dir", type=str, help="", required=True)
     parser.add_argument("--extracted-dir", type=str, help="", required=True)
     parser.add_argument("--output-dir", type=str, required=True)
+    parser.add_argument("--eid_file", type=str, help="", required=True)
+    parser.add_argument("--triple_file", type=str, help="", required=True)
     parser.add_argument("--ignore-aka", action="store_true")
     parser.add_argument(
         "--logging-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]

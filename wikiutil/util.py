@@ -12,7 +12,7 @@ from .constant import PADDING
 def load_tsv_as_dict(filepath, keyfunc=lambda x:x, valuefunc=lambda x:x):
     result = {}
     with open(filepath, 'r') as fin:
-        for l in fin:
+        for l in tqdm(fin):
             if l.strip() == '':
                 continue
             l = l.strip().split('\t')
@@ -20,13 +20,15 @@ def load_tsv_as_dict(filepath, keyfunc=lambda x:x, valuefunc=lambda x:x):
     return result
 
 
-def load_tsv_as_list(filepath):
+def load_tsv_as_list(filepath, split=True):
     result = []
     with open(filepath, 'r') as fin:
         for l in fin:
-            if l.strip() == '':
+            l = l.strip()
+            if l == '':
                 continue
-            l = l.strip().split('\t')
+            if split:
+                l = l.split('\t')
             result.append(l)
     return result
 

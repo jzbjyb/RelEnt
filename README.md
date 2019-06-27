@@ -39,3 +39,14 @@ WHERE
 }
 LIMIT 100
 ```
+
+## Wikidata preprocessing
+
+1. download truthy file from https://dumps.wikimedia.org/wikidatawiki/entities/
+2. generate triples.txt
+3. downsampling
+    - downsample triples to keep only frequent entities and save it to triples_ds.txt
+    - downsample triples by properties
+4. split leaf properties to ultra-fine properties (based on the ontology inferred from the entire triples.txt)
+5. modify triples_ds.txt to reflect the changes in property hierarchy
+6. train KGE methods using triples_ds.txt

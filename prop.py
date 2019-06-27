@@ -7,10 +7,11 @@ from collections import defaultdict
 from tqdm import tqdm
 import numpy as np
 from pathlib import Path
+from random import shuffle
 from copy import deepcopy
 from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, \
     hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file, PropertyOccurrence, read_subgraph_file
-from wikiutil.util import read_emb_ids
+from wikiutil.util import read_emb_ids, load_tsv_as_dict, load_tsv_as_list
 from wikiutil.wikidata_query_service import get_property_occurrence
 
 def subprop(args):
@@ -396,13 +397,122 @@ def dfs_collect(root, path: Dict[str, List], depth=1) -> set:
     return went
 
 
+def filter_triples(args):
+    ''' note the all P31 "instance of" should also be kept '''
+    triple_file, entity_file = args.inp.split(':')
+    try:
+        entities = set(load_tsv_as_dict(entity_file).keys())
+    except:
+        entities = set(load_tsv_as_list(entity_file, split=False))
+    print('total number of frequent entities {}'.format(len(entities)))
+    count = 0
+    with open(triple_file, 'r') as tri_fin, \
+            open(args.out, 'w') as fout:
+        for lc, line in tqdm(enumerate(tri_fin), ncols=80, desc='Preparing triples', total=270306417):
+            subj, rel, obj = line.strip().split('\t')
+            # TODO: maybe we need to add "subclass of" as well because some entities don't have P31, e.g., Q204944
+            if rel == 'P31' and subj in entities:
+                count += 1
+                fout.write(line)
+            else:
+                if subj not in entities or obj not in entities:
+                    continue
+                count += 1
+                fout.write(line)
+    print('total number of triples left {}'.format(count))
+
+
+def downsample_by_property(args, ds_func=lambda x: int(min(x, np.sqrt(x) * 10))):
+    ''' assume the property occurrence files are shuffled '''
+    prop_occur_dir = args.inp
+    inter_dir = args.out
+    if os.path.exists(inter_dir):
+        print('{} exists!'.format(inter_dir))
+        exit(1)
+    os.mkdir(inter_dir)
+    def wc(fname):
+        with open(fname, 'r') as f:
+            for i, l in enumerate(f):
+                pass
+        return i + 1
+    ori_lines, ds_lines = 0, 0
+    for root, dirs, files in os.walk(prop_occur_dir):
+        for file in tqdm(files):
+            if not file.endswith('.txt'):
+                continue
+            num_lines = wc(os.path.join(root, file))
+            ori_lines += num_lines
+            ds_num_lines = ds_func(num_lines)
+            ds_lines += ds_num_lines
+            os.system('head -n {} {} > {}'.format(
+                ds_num_lines, os.path.join(root, file), os.path.join(inter_dir, file)))
+    print('from #{} to #{}'.format(ori_lines, ds_lines))
+
+
+def downsample_by_property_and_popularity(args, ds_func=lambda x: int(min(x, np.sqrt(x) * 10))):
+    prop_occur_dir, entity2count = args.inp.split(':')
+    inter_dir = args.out
+    if os.path.exists(inter_dir):
+        print('{} exists!'.format(inter_dir))
+        exit(1)
+
+    # load entity counts
+    entity2count = load_tsv_as_dict(entity2count, valuefunc=int)
+
+    os.mkdir(inter_dir)
+    ori_lines, ds_lines = 0, 0
+    for root, dirs, files in os.walk(prop_occur_dir):
+        for file in tqdm(files):
+            if not file.endswith('.txt'):
+                continue
+            ori_file = os.path.join(root, file)
+            ds_file = os.path.join(inter_dir, file)
+
+            # read all the occs
+            occs: List[Tuple[str, str]] = read_prop_occ_file(
+                ori_file, filter=True, contain_name=False, max_num=None)
+
+            # rank by popularity
+            occs = sorted(occs, key=lambda o: -entity2count[o[0]] - entity2count[o[1]])
+
+            # compute
+            ori_lines += len(occs)
+            dl = ds_func(len(occs))
+            ds_lines += dl
+
+            # output
+            occs = occs[:dl]
+            shuffle(occs)
+            with open(ds_file, 'w') as fout:
+                for o in occs:
+                    fout.write('{}\t{}\n'.format(*o))
+
+    print('from #{} to #{}'.format(ori_lines, ds_lines))
+
+
+def merge_poccs(args):
+    poccs_dir = args.inp
+    with open(args.out, 'w') as fout:
+        for root, dirs, files in os.walk(poccs_dir):
+            for file in tqdm(files):
+                if not file.endswith('.txt'):
+                    continue
+                pid = file.rsplit('.', 1)[0]
+                with open(os.path.join(root, file), 'r') as fin:
+                    for l in fin:
+                        s, o = l.strip().split('\t')
+                        fout.write('{}\t{}\t{}\n'.format(s, pid, o))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
                         choices=['subprop', 'build_tree', 'prop_occur_only',
                                  'prop_occur', 'prop_occur_all', 'prop_entities',
                                  'hiro_to_subgraph', 'prop_occur_ana',
-                                 'wikidata_populate', 'filter_ontology', 'build_ontology'], required=True)
+                                 'wikidata_populate', 'filter_ontology', 'build_ontology',
+                                 'filter_triples', 'downsample_by_property',
+                                 'downsample_by_property_and_popularity', 'merge_poccs'], required=True)
     parser.add_argument('--inp', type=str, required=True)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -423,13 +533,18 @@ if __name__ == '__main__':
         # get all entities linked by all properties using hiro's tuple file
         prop_occur_all(args)
     elif args.task == 'prop_entities':
-        # collect all the entities linked by the properties we are interested in
-        subprops = read_subprop_file('data/subprops.txt')
-        subtrees, isolate = get_all_subtree(subprops)
-        pids = set()
-        for subtree in subtrees:
-            for pid in subtree.traverse():
-                pids.add(pid)
+        only_subtree = False
+        if only_subtree:
+            # collect all the entities linked by the properties we are interested in
+            subprops = read_subprop_file('data/subprops.txt')
+            subtrees, isolate = get_all_subtree(subprops)
+            pids = set()
+            for subtree in subtrees:
+                for pid in subtree.traverse():
+                    pids.add(pid)
+        else:
+            subprops = read_subprop_file('data/subprops.txt')
+            pids = set([p[0] for p, c in subprops])
         print('totally {} pids'.format(len(pids)))
         prop_entities(args, contain_name=False, pids=pids)
     elif args.task == 'hiro_to_subgraph':
@@ -447,3 +562,16 @@ if __name__ == '__main__':
     elif args.task == 'build_ontology':
         # build ontology using the triples
         build_ontology(args, top_level=2)
+    elif args.task == 'filter_triples':
+        # filter triples to include only frequent entities
+        filter_triples(args)
+    elif args.task == 'downsample_by_property':
+        # down-sample wikidata through properties
+        downsample_by_property(args)
+    elif args.task == 'downsample_by_property_and_popularity':
+        # down-sample wikidata through properties
+        ds_func = lambda x: int(min(x, np.sqrt(min(x, 1e5)) * 10))
+        downsample_by_property_and_popularity(args, ds_func=ds_func)
+    elif args.task == 'merge_poccs':
+        # merge all the property occurrence files
+        merge_poccs(args)

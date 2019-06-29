@@ -118,7 +118,7 @@ def read_emb_ids(filepath, filter=False) -> set:
     result = set()
     with open(filepath, 'r') as fin:
         for id in tqdm(fin):
-            id = id.strip()
+            id = id.strip().split('\t', 1)[0]
             if filter:
                 if id.startswith('<http://www.wikidata.org/entity/') or \
                         id.startswith('<http://www.wikidata.org/prop/direct/'):

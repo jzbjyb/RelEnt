@@ -82,7 +82,7 @@ def read_prop_occ_file(filepath, filter=False, contain_name=True, max_num=None) 
                 hid, _, tid, _ = l.strip().split('\t')
             else:
                 hid, tid = l.strip().split('\t')
-            if filter and not re.match('^Q[0-9]+$', hid) or not re.match('^Q[0-9]+$', tid):
+            if filter and (not re.match('^Q[0-9]+$', hid) or not re.match('^Q[0-9]+$', tid)):
                 # only keep entities
                 continue
             yield (hid, tid)

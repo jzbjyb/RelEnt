@@ -6,12 +6,15 @@ import argparse, json, os, time
 from collections import defaultdict
 from tqdm import tqdm
 import numpy as np
-from pathlib import Path
 from random import shuffle
+import re
 from copy import deepcopy
+import shutil
+from sklearn.metrics.pairwise import cosine_similarity
 from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, \
-    hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file, PropertyOccurrence, read_subgraph_file
-from wikiutil.util import read_emb_ids, load_tsv_as_dict, load_tsv_as_list
+    hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file, PropertyOccurrence, read_subgraph_file, \
+    read_prop_occ_file_from_dir, property_split
+from wikiutil.util import read_emb_ids, load_tsv_as_dict, load_tsv_as_list, read_embeddings_from_text_file
 from wikiutil.wikidata_query_service import get_property_occurrence
 
 def subprop(args):
@@ -107,7 +110,7 @@ def prop_occur_all(args):
                     rel_file_dict[rel] = open(os.path.join(args.out, rel + '.txt'), 'w')
                 rel_file_dict[rel].write('{}\t{}\n'.format(subj, obj))
                 rel_count_dict[rel] += 1
-        with open(os.path.join(args.out, 'stat.txt'), 'w') as fout:
+        with open(os.path.join(args.out, 'stat'), 'w') as fout:
             for pid, count in sorted(rel_count_dict.items(), key=lambda x: -x[1]):
                 fout.write('{}\t{}\n'.format(pid, count))
     finally:
@@ -260,9 +263,8 @@ def wikidata_populate(args):
 
 
 def filter_ontology(args):
-    wikidata_dir = Path(args.inp)
     count = 0
-    with (wikidata_dir / f'triples.txt').open('r') as fin, open(args.out, 'w') as fout:
+    with open(args.inp, 'r') as fin, open(args.out, 'w') as fout:
         for lc, line in tqdm(enumerate(fin), ncols=80, desc='Preparing triples', total=270306417):
             subj, rel, obj = line.strip().split('\t')
             if rel != 'P279' and rel != 'P31':  # only focus on "subclass of" and "instance of"
@@ -450,23 +452,32 @@ def downsample_by_property(args, ds_func=lambda x: int(min(x, np.sqrt(x) * 10)))
 
 
 def downsample_by_property_and_popularity(args, ds_func=lambda x: int(min(x, np.sqrt(x) * 10))):
-    prop_occur_dir, entity2count = args.inp.split(':')
-    inter_dir = args.out
-    if os.path.exists(inter_dir):
-        print('{} exists!'.format(inter_dir))
+    prop_occur_dir, entity2count, useful_props = args.inp.split(':')
+    ds_dir = args.out
+    if os.path.exists(ds_dir):
+        print('{} exists!'.format(ds_dir))
         exit(1)
 
     # load entity counts
     entity2count = load_tsv_as_dict(entity2count, valuefunc=int)
 
-    os.mkdir(inter_dir)
+    # load useful properties
+    useful_props = set(load_tsv_as_dict(useful_props).keys())
+
+    os.mkdir(ds_dir)
     ori_lines, ds_lines = 0, 0
     for root, dirs, files in os.walk(prop_occur_dir):
         for file in tqdm(files):
             if not file.endswith('.txt'):
                 continue
+            pid = file.rsplit('.', 1)[0]
+
+            if pid not in useful_props:
+                print('skip {} because not useful'.format(pid))
+                continue
+
             ori_file = os.path.join(root, file)
-            ds_file = os.path.join(inter_dir, file)
+            ds_file = os.path.join(ds_dir, file)
 
             # read all the occs
             occs: List[Tuple[str, str]] = read_prop_occ_file(
@@ -480,14 +491,21 @@ def downsample_by_property_and_popularity(args, ds_func=lambda x: int(min(x, np.
             dl = ds_func(len(occs))
             ds_lines += dl
 
+            # remove duplicates and shuffle
+            ds_occs = set()
+            for o in occs:
+                ds_occs.add(o)
+                if len(ds_occs) >= dl:
+                    break
+            ds_occs = list(ds_occs)
+            shuffle(ds_occs)
+
             # output
-            occs = occs[:dl]
-            shuffle(occs)
             with open(ds_file, 'w') as fout:
-                for o in occs:
+                for o in ds_occs:
                     fout.write('{}\t{}\n'.format(*o))
 
-    print('from #{} to #{}'.format(ori_lines, ds_lines))
+    print('from #{} to #{} instances'.format(ori_lines, ds_lines))
 
 
 def merge_poccs(args):
@@ -504,6 +522,230 @@ def merge_poccs(args):
                         fout.write('{}\t{}\t{}\n'.format(s, pid, o))
 
 
+def get_useless_props(args):
+    subprops, poccs_dir = args.inp.split(':')
+    subprops = read_subprop_file(subprops)
+
+    miss, useful, useless = [], [], []
+    for (pid, plabel), c in tqdm(subprops):
+        label = -1
+        for h, t in read_prop_occ_file_from_dir(
+                pid, poccs_dir, filter=False, contain_name=True, max_num=None, use_order=True):
+            if re.match('^Q[0-9]+$', h) and re.match('^Q[0-9]+$', t):
+                label = 1
+            else:
+                label = 0
+            break
+        if label == -1:
+            miss.append(pid)
+        elif label == 1:
+            useful.append(pid)
+        elif label == 0:
+            useless.append(pid)
+    print('miss: {}, useful {}, useless {}'.format(len(miss), len(useful), len(useless)))
+    return miss, useful, useless
+
+
+def read_graph_link(filename):
+    parent2chids = defaultdict(lambda: [])
+    child2parents = defaultdict(lambda: [])
+    with open(filename, 'r') as fin:
+        for i, l in tqdm(enumerate(fin)):
+            subj, rel, obj = l.strip().split('\t')
+            if subj == 'Q35120':  # use "entity" as one of the root
+                continue
+            parent2chids[obj].append(subj)
+            child2parents[subj].append(obj)
+    return dict(parent2chids), dict(child2parents)
+
+
+def get_partial_order(args):
+    # load parent2child and child2parent
+    p2c, c2p = read_graph_link(args.inp)
+    ps = set(p2c.keys())
+    cs = set(c2p.keys())
+    all_nodes = ps | cs
+    roots = all_nodes - cs
+    went = set()
+    last_layer = roots
+    depth = 0
+    node2dep = {}
+    print('total {} nodes, with {} roots'.format(len(all_nodes), len(roots)))
+
+    # bfs search
+    while len(last_layer) > 0:
+        print('depth: {}'.format(depth))
+        next_layer = set()
+        went.update(last_layer)
+        for n in last_layer:
+            node2dep[n] = depth
+            if n in p2c:
+                for c in p2c[n]:
+                    can = True
+                    for p in c2p[c]:
+                        if p not in went:
+                            can = False
+                            break
+                    if can and c not in went:
+                        next_layer.add(c)
+        last_layer = next_layer
+        depth += 1
+
+    # Use dfs to attach the remaining ones.
+    # Because there are cycles, so the number in node2dep is not equal to the number in all_nodes.
+    in_partial_order = set(node2dep.keys())
+    other_node2dep = {}
+    for other in tqdm(all_nodes - in_partial_order):
+        dfs_find(other, c2p, destination=in_partial_order, node2dest=other_node2dep, hist=set())
+    for k, (dest, dep) in other_node2dep.items():
+        node2dep[k] = node2dep[dest] + dep
+
+    with open(args.out, 'w') as fout:
+        for k, v in sorted(node2dep.items(), key=lambda x: x[1]):
+            fout.write('{}\t{}\n'.format(k, v))
+
+
+def split_leaf_properties(args):
+    pocc_dir, subgraph_dict, subprops, node2depth = args.inp.split(':')
+    split_pocc_dir = args.out
+
+    subprops = read_subprop_file(subprops)
+    pid2plabel = dict(p[0] for p in subprops)
+    pid2plabel_ = lambda x: pid2plabel[x.split('_', 1)[0]]
+    subtrees, _ = get_all_subtree(subprops)
+    subgraph_dict = read_subgraph_file(subgraph_dict)
+    node2depth = load_tsv_as_dict(node2depth, valuefunc=int)
+
+    # get all the leaves
+    leaves = set()
+    for subtree in subtrees:
+        leaves.update(subtree.leaves)
+    print('totally {} leaves'.format(len(leaves)))
+
+    pid2splitcount = {}
+    all_poccs = {}
+    split_is_parent = set()
+    ori_occ_count, new_occ_count = 0, 0
+
+    # iterate over all the leaves to split
+    for leaf in tqdm(leaves):
+        this_pocccs = property_split(
+            leaf, pocc_dir, subgraph_dict, node2depth, thres=0.01, debug=False, use_major_as_ori=False)
+        if len(this_pocccs) <= 0:  # no occurrences for this property
+            continue
+        if leaf not in this_pocccs:  # no original property
+            continue
+        if len(this_pocccs) == 1:  # cannot be splitted
+            continue
+
+        # count and build parent-children relationship
+        for k in this_pocccs:
+            if k != leaf:
+                split_is_parent.add((leaf, k))
+                new_occ_count += len(this_pocccs[k])
+        ori_occ_count += len(this_pocccs[leaf])
+        pid2splitcount[leaf] = len(this_pocccs)
+
+        # collect splits
+        all_poccs.update(this_pocccs)
+
+    print('totally {} parents'.format(len(pid2splitcount)))
+    print('ori occ count: {}, new occ count: {}'.format(ori_occ_count, new_occ_count))
+    print('pid -> split count:')
+    print(sorted(pid2splitcount.items(), key=lambda x: -x[1]))
+
+    pid2child: Dict[str, List[str]] = {}
+    for (pid, plabel), cs in tqdm(subprops):
+        from_file = os.path.join(pocc_dir, '{}.txt'.format(pid))
+        to_file = os.path.join(split_pocc_dir, '{}.txt'.format(pid))
+        if pid not in all_poccs:  # no split
+            if os.path.exists(from_file):
+                shutil.copy(from_file, to_file)
+            pid2child[pid] = [c[0] for c in cs]
+        else:
+            parent = pid
+            childs = [k for k in all_poccs if k.startswith(pid + '_')]
+            for npid in [parent] + childs:
+                with open(os.path.join(split_pocc_dir, '{}.txt'.format(npid)), 'w') as fout:
+                    for h, t in all_poccs[npid]:
+                        fout.write('{}\t{}\n'.format(h, t))
+            pid2child[parent] = childs
+            for c in childs:
+                pid2child[c] = []
+    with open(os.path.join(split_pocc_dir, 'subprops'), 'w') as fout:
+        for k, v in pid2child.items():
+            fout.write('{},{}\t{}\n'.format(
+                k, pid2plabel_(k), '\t'.join(['{},{}'.format(c, pid2plabel_(c)) for c in v])))
+    with open(os.path.join(split_pocc_dir, 'stat'), 'w') as fout:
+        for pid, poccs in sorted(all_poccs.items(), key=lambda x: -len(x[1])):
+            fout.write('{}\t{}\n'.format(pid, len(poccs)))
+
+
+def make_hard_split(subprops_split: List,
+                    emb: np.ndarray,
+                    emb_id2ind: Dict[str, int],
+                    method: str = 'middle'):
+    # collect all the split childs
+    p2c: Dict[str, set] = defaultdict(set)
+    for (pid, plable), c in subprops_split:
+        if pid.find('_') != -1:
+            p2c[pid.split('_')[0]].add(pid)
+    # find hard parent by similartiy
+    long_tail_count, head_count = 0, 0
+    p2hard: Dict[str, str] = {}
+    for parent, childs in p2c.items():
+        this_group = [parent] + list(childs)
+        emb_for_this_group = np.array([emb[emb_id2ind[pid]] for pid in this_group], dtype=np.float32)
+        sim = cosine_similarity(emb_for_this_group, emb_for_this_group)
+        sim = np.mean(sim, axis=1)
+        if method == 'min':
+            outlier = this_group[np.argmin(sim)]
+        elif method == 'middle':
+            outlier = this_group[np.argsort(sim)[len(sim) // 2]]
+        elif method.startswith('top_'):
+            top_m = min(int(method.split('_', 1)[1]), len(sim))
+            outlier = this_group[np.argsort(sim)[top_m]]
+        else:
+            raise NotImplemented
+        p2hard[parent] = outlier
+        if outlier == parent:
+            long_tail_count += 1
+        else:
+            head_count += 1
+    print('long tail outlier {}, head outlier {}'.format(long_tail_count, head_count))
+    return p2hard
+
+
+def replace_by_hard_split(args):
+    subprops_split, emb = args.inp.split(':')
+
+    emb_id2ind, emb = read_embeddings_from_text_file(emb, debug=False, emb_size=200, use_padding=True)
+    subprops_split = read_subprop_file(subprops_split)
+    pid2plabel = dict(p[0] for p in subprops_split)
+
+    # get hard parent
+    p2hard = make_hard_split(subprops_split, emb, emb_id2ind, method='middle')
+
+    # save subprop
+    hard2p = dict((v, k) for k, v in p2hard.items())
+    for i, ((pid, plabel), c) in enumerate(subprops_split):
+        if pid in p2hard and pid != p2hard[pid]:
+            nplabel = None
+            for j, (cpid, cplabel) in enumerate(c):
+                if cpid == p2hard[pid]:
+                    c[j] = (pid, plabel)
+                    nplabel = cplabel
+                    break
+            subprops_split[i] = ((p2hard[pid], nplabel), c)
+        elif pid in hard2p and pid != hard2p[pid]:
+            subprops_split[i] = ((hard2p[pid], pid2plabel[hard2p[pid]]), c)
+
+    with open(os.path.join(args.out, 'subprops_hard'), 'w') as fout:
+        for (pid, plabel), c in subprops_split:
+            fout.write('{},{}\t{}\n'.format(
+                pid, plabel, '\t'.join(['{},{}'.format(cpid, cplabel) for cpid, cplabel in c])))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
@@ -512,7 +754,9 @@ if __name__ == '__main__':
                                  'hiro_to_subgraph', 'prop_occur_ana',
                                  'wikidata_populate', 'filter_ontology', 'build_ontology',
                                  'filter_triples', 'downsample_by_property',
-                                 'downsample_by_property_and_popularity', 'merge_poccs'], required=True)
+                                 'downsample_by_property_and_popularity', 'merge_poccs',
+                                 'get_useless_props', 'get_partial_order',
+                                 'split_leaf_properties', 'replace_by_hard_split'], required=True)
     parser.add_argument('--inp', type=str, required=True)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -575,3 +819,15 @@ if __name__ == '__main__':
     elif args.task == 'merge_poccs':
         # merge all the property occurrence files
         merge_poccs(args)
+    elif args.task == 'get_useless_props':
+        # how many properties are useful
+        get_useless_props(args)
+    elif args.task == 'get_partial_order':
+        # get the partial order from ontology
+        get_partial_order(args)
+    elif args.task == 'split_leaf_properties':
+        # split leaf properties by instance type of head and tail entity
+        split_leaf_properties(args)
+    elif args.task == 'replace_by_hard_split':
+        # get hard parent for each split
+        replace_by_hard_split(args)

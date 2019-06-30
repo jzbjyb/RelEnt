@@ -6,6 +6,7 @@ from copy import deepcopy
 from tqdm import tqdm
 import subprocess, re, os, random, functools, pickle
 import numpy as np
+from operator import itemgetter
 
 
 def hiro_subgraph_to_tree_dict(root: str,
@@ -112,7 +113,7 @@ def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
         for l in fin:
             ps = l.strip().split('\t')
             par_id, par_label = ps[0].split(',', 1)
-            childs = [tuple(p.split(',')) for p in ps[1:]]
+            childs = [tuple(p.split(',', 1)) for p in ps[1:]]
             result.append(((par_id, par_label), childs))
     return result
 
@@ -288,6 +289,86 @@ def filter_prop_occ_by_subgraph_and_emb(prop: str,
         if max_num and len(filtered) >= max_num:
             break
     return filtered
+
+
+def property_split(pid: str,
+                   pocc_dir: str,
+                   subgraph_dict: Dict[str, List],
+                   node2depth: Dict[str, int],
+                   thres: float = 0.01,
+                   debug: bool = False,
+                   use_major_as_ori: bool = False):
+    def newprop_format(head_type: Tuple, tail_type: Tuple):
+        if len(head_type) == 0:
+            head_type = ['Q']
+        if len(tail_type) == 0:
+            tail_type = ['Q']
+        if len(head_type) > 1 or len(tail_type) > 1:
+            raise NotImplemented
+        return '{}_{}'.format(head_type[0], tail_type[0])
+
+    # count types of head and tail entities
+    type2count: Dict[str, int] = defaultdict(lambda: 0)
+    type2occ: Dict[str, List[Tuple]] = defaultdict(lambda: [])
+    miss_count, no_type_count = 0, 0
+    pid_occs = list(set(read_prop_occ_file_from_dir(
+        pid, pocc_dir, filter=True, contain_name=False, max_num=None, use_order=False)))
+
+    # collect by head and tail entity type
+    for h, t in tqdm(pid_occs, disable=not debug):
+        if h not in subgraph_dict or t not in subgraph_dict:
+            miss_count += 1
+            continue
+        head_types = []
+        dep = -1
+        for e1, r, e2 in subgraph_dict[h]:
+            if e1 == h and r == 'P31':
+                if node2depth[e2] > dep:
+                    dep = node2depth[e2]
+                    head_types = [e2]
+        tail_types = []
+        dep = -1
+        for e1, r, e2 in subgraph_dict[t]:
+            if e1 == t and r == 'P31':
+                if node2depth[e2] > dep:
+                    dep = node2depth[e2]
+                    tail_types = [e2]
+        if len(head_types) == 0 or len(tail_types) == 0:
+            no_type_count += 1
+        type_key = newprop_format(tuple(head_types), tuple(tail_types))
+        type2count[type_key] += 1
+        type2occ[type_key].append((h, t))
+
+    type2count = sorted(type2count.items(), key=lambda x: -x[1])
+    type2count_keep = [(k, v) for k, v in type2count if v >= len(pid_occs) * thres]
+
+    if debug:
+        print('{} occs, miss {}, {} have no type'.format(len(pid_occs), miss_count, no_type_count))
+        print('total split {}, major split {} with count {}'.format(
+            len(type2count), len(type2count_keep), np.sum(list(map(itemgetter(1), type2count_keep)))))
+        print('head split: {}'.format(type2count[:10]))
+        print('tail split: {}'.format(type2count[-10:]))
+
+    # split
+    pid2occ = defaultdict(lambda: [])
+    if use_major_as_ori:  # use the split with the most number of instances as the orginal property
+        for i, (k, v) in enumerate(type2count):
+            if i == 0:
+                pid2occ[pid] = type2occ[k]
+            elif v >= len(pid_occs) * thres:
+                pid2occ[pid + '_' + str(k)] = type2occ[k]
+            else:
+                pid2occ[pid + '_' + 'LONGTAIL'].extend(type2occ[k])
+    else:
+        for i, (k, v) in enumerate(type2count):
+            # use top types as new properties (keep at least one type for the original property)
+            if v >= len(pid_occs) * thres and i < len(type2count) - 1:
+                pid2occ[pid + '_' + str(k)] = type2occ[k]
+            else:  # merge low-frequency types as the original property
+                pid2occ[pid].extend(type2occ[k])
+
+    assert np.sum([len(v) for k, v in pid2occ.items()]) == len(pid_occs), 'after split, the number of occs changes'
+    return pid2occ
 
 
 class PropertySubtree():

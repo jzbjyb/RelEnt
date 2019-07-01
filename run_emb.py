@@ -26,6 +26,7 @@ if __name__ == '__main__':
     parser.add_argument('--method', type=str, default='avg', help='which model to use')
     parser.add_argument('--filter_num_poccs', type=int, default=None, help='properties larger than this are kept')
     parser.add_argument('--skip_split', action='store_true')
+    parser.add_argument('--only_prop_emb', action='store_true')
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -46,7 +47,7 @@ if __name__ == '__main__':
         emb_id2ind,
         top=100,
         method=args.method,
-        only_prop_emb=False,
+        only_prop_emb=args.only_prop_emb,
         detect_cheat=False,
         use_minus=False,
         filter_num_poccs=args.filter_num_poccs,

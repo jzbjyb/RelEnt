@@ -5,6 +5,7 @@
 set -e
 
 data_dir=data/analogy_dataset/split_middle_by_entail_nway_subgraph10_sample5
+load_split=data/analogy_dataset/split_middle_overlap
 data_format=n_way
 subgraph_file=data/subgraph/property_occurrence_prop580k_split.subgraph
 #subgraph_file=data/property_occurrence_subtree.subgraph
@@ -30,9 +31,10 @@ python prep_data.py \
     --num_sample 5 \
     --contain_train \
     --allow_empty_split \
-    --load_split \
+    --load_split ${load_split} \
     --filter_test
 
+: '
 python train.py \
     --dataset_dir ${data_dir} \
     --dataset_format ${data_format} \
@@ -43,3 +45,4 @@ python train.py \
     --filter_emb data/emb/test.emb \
     --method ggnn \
     --edge_type one
+'

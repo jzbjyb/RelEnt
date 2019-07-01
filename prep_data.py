@@ -11,7 +11,7 @@ from tqdm import tqdm
 import numpy as np
 from wikiutil.property import read_subprop_file, get_all_subtree, \
     get_is_sibling, read_subgraph_file, get_is_parent, PropertyOccurrence, get_is_ancestor
-from wikiutil.util import read_emb_ids, save_emb_ids, DefaultOrderedDict, load_tsv_as_list
+from wikiutil.util import read_emb_ids, save_emb_ids, DefaultOrderedDict, load_tsv_as_list, load_tsv_as_dict
 
 
 if __name__ == '__main__':
@@ -40,8 +40,8 @@ if __name__ == '__main__':
                         help='whether dev and test contain training properties')
     parser.add_argument('--num_sample', type=int, default=10000,
                         help='number of pairs to sample/sample for each property pair/property')
-    parser.add_argument('--load_split', action='store_true',
-                        help='directly load train/dev/test and parent (if any) properties from out_dir')
+    parser.add_argument('--load_split', type=str,
+                        help='directly to load train/dev/test and parent (if any) properties from out_dir')
     parser.add_argument('--allow_empty_split', action='store_true',
                         help='whether empty split is allowed. used in within_tree and by_entail and by_entail-n_way')
     parser.add_argument('--filter_test', action='store_true', help='whether to remove test pid before population')
@@ -71,9 +71,9 @@ if __name__ == '__main__':
     subgraph_dict = read_subgraph_file(args.subgraph_file)
     #save_emb_ids(args.emb_file, args.emb_file + '.id')
     emb_set = read_emb_ids(args.emb_file)
-    if args.load_split and os.path.exists(os.path.join(args.out_dir, 'poccs.pickle')):
+    if args.load_split and os.path.exists(os.path.join(args.load_split, 'poccs.pickle')):
         print('load preprocessed property occs')
-        with open(os.path.join(args.out_dir, 'poccs.pickle'), 'rb') as fin:
+        with open(os.path.join(args.load_split, 'poccs.pickle'), 'rb') as fin:
             poccs = PropertyOccurrence(pickle.load(fin), num_occ_per_subgraph=args.num_occ_per_subgraph)
     else:
         if args.property_population:
@@ -149,10 +149,10 @@ if __name__ == '__main__':
         # split each tir in a subtree into train/dev/test by viewing parent property as label
         if args.load_split:
             print('load existing splits ...')
-            parent_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.out_dir, 'label2ind.txt'))))
-            train_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.out_dir, 'train.prop'))))
-            dev_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.out_dir, 'dev.prop'))))
-            test_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.out_dir, 'test.prop'))))
+            parent_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.load_split, 'label2ind.txt'))))
+            train_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.load_split, 'train.prop'))))
+            dev_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.load_split, 'dev.prop'))))
+            test_prop = list(map(itemgetter(0), load_tsv_as_list(os.path.join(args.load_split, 'test.prop'))))
         else:
             parent_prop, train_prop, dev_prop, test_prop = [], [], [], []
             for subtree in subtrees:
@@ -180,7 +180,10 @@ if __name__ == '__main__':
     is_parent = get_is_parent(subprops)
     is_ancestor = get_is_ancestor(subtrees)
     final_prop_split: Dict[str, str] = defaultdict(lambda: '*')
-    label2id = DefaultOrderedDict(lambda: len(label2id))  # collect labels
+    if args.load_split:
+        label2ind = load_tsv_as_dict(os.path.join(args.load_split, 'label2ind.txt'))
+    else:
+        label2ind = DefaultOrderedDict(lambda: len(label2ind))  # collect labels
     for prop_split_name in ['train_prop', 'dev_prop', 'test_prop']:
         prop_split = eval(prop_split_name)
 
@@ -245,8 +248,8 @@ if __name__ == '__main__':
                         print('parents of {} are {}'.format(p, labels))
                     for label in labels:
                         for po in get_all_occs(p):
-                            fout.write('{}\t{}\n'.format(label2id[label], po))
-            print('{} labels up to now'.format(len(label2id)))
+                            fout.write('{}\t{}\n'.format(label2ind[label], po))
+            print('{} labels up to now'.format(len(label2ind)))
 
         elif args.method in {'by_entail-overlap'}:
             with open(os.path.join(args.out_dir, 'poccs.pickle'), 'wb') as fout:
@@ -265,7 +268,7 @@ if __name__ == '__main__':
     if args.method in {'by_entail-n_way'}:
         # save parent properties (required because these are classification labels)
         with open(os.path.join(args.out_dir, 'label2ind.txt'), 'w') as fout:
-            for label, ind in label2id.items():
+            for label, ind in label2ind.items():
                 fout.write('{}\t{}\n'.format(label, ind))
 
     elif args.method in {'by_entail', 'by_entail-overlap'}:

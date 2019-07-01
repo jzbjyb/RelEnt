@@ -4,7 +4,7 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data/analogy_dataset/split_middle_overlap
+data_dir=data/analogy_dataset/split_middle_overlap_popu
 data_format=pointwise
 subgraph_file=data/subgraph/property_occurrence_prop580k.subgraph
 #subgraph_file=data/property_occurrence_subtree.subgraph

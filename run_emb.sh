@@ -9,7 +9,7 @@ for method in avg mixgau_fast
 do
     for emb in ../pytorch_big_graph/emb/transe.txt ../pytorch_big_graph/emb/complex.txt ../pytorch_big_graph/emb/distmult.txt
     do
-        for data_dir in "data/analogy_dataset/split_middle/" "data/analogy_dataset/split_middle_overlap/" "data/analogy_dataset/split_middle_overlap_withtest/"
+        for data_dir in "data/analogy_dataset/split_middle_overlap/" "data/analogy_dataset/split_middle_overlap_popu/" "data/analogy_dataset/split_middle_overlap_popu_withtest/"
         do
             echo "======="
             echo ${method} ${emb} ${data_dir}

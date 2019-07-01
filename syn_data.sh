@@ -62,6 +62,18 @@ python prop.py --task merge_poccs \
 shuf data/split_merge_triples/property_occurrence_prop580k_split.tsv > \
     data/split_merge_triples/property_occurrence_prop580k_split_shuf.tsv
 
+# generate new subgraphs
+python hiro_code.py \
+    --wikitext-dir data/title_id_map \
+    --extracted-dir data/hiro_wikidata/ \
+    --output-dir data/subgraph/ \
+    --triple_file data/split_merge_triples/property_occurrence_prop580k_split.tsv \
+    --eid_file data/property_eid/property_occurrence_all_ds_notonlytree.eid
+
+python prop.py --task hiro_to_subgraph \
+    --inp data/property_eid/property_occurrence_all_ds_notonlytree.eid:data/subgraph/hiro_subgraph.jsonl \
+    --out data/subgraph/property_occurrence_prop580k_split.subgraph
+
 # train KGE models and put it to ${emb}
 
 # replace parents

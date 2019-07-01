@@ -6,7 +6,7 @@ set -e
 
 data_dir=data/analogy_dataset/split_middle_by_entail_nway_subgraph10_sample5
 data_format=n_way
-subgraph_file=data/subgraph/property_occurrence_prop580k.subgraph
+subgraph_file=data/subgraph/property_occurrence_prop580k_split.subgraph
 #subgraph_file=data/property_occurrence_subtree.subgraph
 prop_dir=data/property_occurrence_prop580k_split
 #prop_file=data/property_occurrence_prop580k_split/subprops

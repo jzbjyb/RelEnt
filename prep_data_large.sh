@@ -4,14 +4,14 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data/analogy_dataset/split_middle_overlap_popu
-data_format=pointwise
+data_dir=data/analogy_dataset/split_middle_by_entail_nway_subgraph10_sample5
+data_format=n_way
 subgraph_file=data/subgraph/property_occurrence_prop580k.subgraph
 #subgraph_file=data/property_occurrence_subtree.subgraph
 prop_dir=data/property_occurrence_prop580k_split
 #prop_file=data/property_occurrence_prop580k_split/subprops
 prop_file=data/property_occurrence_prop580k_split/subprops_hard
-method=by_entail-overlap
+method=by_entail-n_way
 emb_file=../pytorch_big_graph/emb/transe.txt
 
 mkdir -p ${data_dir}
@@ -27,10 +27,9 @@ python prep_data.py \
     --max_occ_per_prop 10000 \
     --min_occ_per_prop 10 \
     --num_occ_per_subgraph 10 \
-    --num_sample 100 \
+    --num_sample 5 \
     --contain_train \
     --allow_empty_split \
-    --property_population \
     --load_split \
     --filter_test
 

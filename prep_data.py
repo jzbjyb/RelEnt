@@ -71,13 +71,12 @@ if __name__ == '__main__':
     subgraph_dict = read_subgraph_file(args.subgraph_file)
     #save_emb_ids(args.emb_file, args.emb_file + '.id')
     emb_set = read_emb_ids(args.emb_file)
-    if args.property_population:
-        if args.load_split and os.path.exists(os.path.join(args.out_dir, 'poccs.pickle')):
-            print('load preprocessed property occs')
-            with open(os.path.join(args.out_dir, 'poccs.pickle'), 'rb') as fin:
-                poccs = PropertyOccurrence(pickle.load(fin),
-                                           num_occ_per_subgraph=args.num_occ_per_subgraph)
-        else:
+    if args.load_split and os.path.exists(os.path.join(args.out_dir, 'poccs.pickle')):
+        print('load preprocessed property occs')
+        with open(os.path.join(args.out_dir, 'poccs.pickle'), 'rb') as fin:
+            poccs = PropertyOccurrence(pickle.load(fin), num_occ_per_subgraph=args.num_occ_per_subgraph)
+    else:
+        if args.property_population:
             filter_pids = None
             if args.filter_test:
                 # filter both dev and test properites
@@ -94,15 +93,15 @@ if __name__ == '__main__':
                                              populate_method='top_down',
                                              subtrees=subtrees,
                                              filter_pids=filter_pids)
-    else:
-        # min_occ_per_prop is not used because some parent property (e.g., P3342: significant person)
-        # is unexpectedly small, and obviously we don't want to loss any parent properties.
-        poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
-                                         subgraph_dict=subgraph_dict,
-                                         emb_set=emb_set,
-                                         max_occ_per_prop=args.max_occ_per_prop,
-                                         min_occ_per_prop=args.min_occ_per_prop,
-                                         num_occ_per_subgraph=args.num_occ_per_subgraph)
+        else:
+            # min_occ_per_prop is not used because some parent property (e.g., P3342: significant person)
+            # is unexpectedly small, and obviously we don't want to loss any parent properties.
+            poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
+                                             subgraph_dict=subgraph_dict,
+                                             emb_set=emb_set,
+                                             max_occ_per_prop=args.max_occ_per_prop,
+                                             min_occ_per_prop=args.min_occ_per_prop,
+                                             num_occ_per_subgraph=args.num_occ_per_subgraph)
 
     print('{} out of {} property pass existence check'.format(len(poccs.pids), len(all_propids)))
     all_propids &= set(poccs.pids)

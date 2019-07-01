@@ -15,6 +15,20 @@ is_parent = get_is_parent(subprops)
 is_ancestor = get_is_ancestor(subtrees)
 
 
+def get_ranks(ranks: Dict[str, List[Tuple[str, float]]], is_parent, is_ancestor):
+    def get_rel(parent, child):
+        if (parent, child) in is_parent:
+            return 'parent'
+        elif (parent, child) in is_ancestor:
+            return 'ancestor'
+        else:
+            return '*'
+    new_ranks: Dict[str, List[Tuple[str, float, str]]] = {}
+    for query, docs in ranks.items():
+        new_ranks[query] = [(doc, score, get_rel(doc, query)) for doc, score in docs]
+    return new_ranks
+
+
 class AnalogyEval():
     ''' Analogy Evaluation '''
 
@@ -198,7 +212,7 @@ class AnalogyEval():
         return getattr(self, reduction + '_' + metric)(predictions)
 
 
-def accuracy_nway(predictions: List[Tuple[str, List, int]], method='macro'):
+def accuracy_nway(predictions: List[Tuple[str, List, int]], method='macro', agg='product'):
     assert method in {'macro', 'micro'}
     pid2acc = defaultdict(lambda: [])
     corr, total = 0, 0
@@ -210,9 +224,10 @@ def accuracy_nway(predictions: List[Tuple[str, List, int]], method='macro'):
     if method == 'macro':
         acc_per_prop = sorted([(k, np.mean(v)) for k, v in pid2acc.items()], key=lambda x: -x[1])
         acc = np.mean(list(map(itemgetter(1), acc_per_prop)))
+        print(np.mean([v[np.random.choice(len(v), 1)[0]] for k, v in pid2acc.items()]), len(acc_per_prop))
     elif method == 'micro':
         acc = corr / total
-    return acc, _  # TODO: add rank results
+    return acc, {}  # TODO: add rank results
 
 
 def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='macro', agg='product'):
@@ -269,6 +284,19 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
             corr += c == 0
             total += 1
             eval_result.append((child, c))
+        # TODO: add mrr
+        '''
+        for child in child2ancestor:
+            rr = 0
+            scores = sorted(child2ancestor[child].items(), key=lambda x: -x[1])
+            for i in range(len(scores)):
+                if (scores[i][0], child) in is_parent:
+                    rr = 1 / (i + 1)
+                    break
+            corr += rr
+            total += 1
+            eval_result.append((child, corr))
+        '''
     elif agg == 'rank':
         for child in child2ancestor:
             c = 0  # 0 is correct
@@ -299,7 +327,7 @@ def rank_to_csv(ranks: Dict[str, List], filepath: str, key2name: Dict[str, str] 
     max_num_docs = np.max([len(r) for q, r in ranks.items()])
     with open(filepath, 'w') as fout:
         fout.write('query,' + ','.join(map(lambda x: 'pos_' + str(x), range(max_num_docs))) + '\n')
-        for q, r in ranks.items():
+        for q, r in sorted(ranks.items(), key=itemgetter(0)):
             if key2name is not None:
                 q = key2name[q]
             fout.write('"{}"'.format(q) + ',')

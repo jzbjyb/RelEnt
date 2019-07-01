@@ -6,25 +6,25 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-dataset_dir=data/analogy_dataset/by_entail_622_subgraph10_ancestor5_sample100_maxoccperprop10k_haslongtailhasemptysplit
-emb_file=${dataset_dir}/emb.txt
-subgraph_file=data/subgraph/property_occurrence_all_shuf_top100k.subgraph
-#subgraph_file=data/property_occurrence_subtree.subgraph
-data_format=pointwise
-save_dir=model/large_only_property
+dataset_dir=data/analogy_dataset/split_middle_by_entail_nway_subgraph10_sample5
+emb_file=../pytorch_big_graph/emb/transe.txt
+subgraph_file=data/subgraph/property_occurrence_prop580k_split.subgraph
+subprop_file=data/property_occurrence_prop580k_split/subprops_hard
+data_format=nway
+save_dir=model/test
 
 python train.py \
     --dataset_dir ${dataset_dir} \
     --dataset_format ${data_format} \
     --subgraph_file ${subgraph_file} \
-    --subprop_file data/subprops.txt \
+    --subprop_file ${subprop_file} \
     --emb_file ${emb_file} \
     --patience 40 \
     --num_workers 4 \
     --method ggnn \
     --match concat \
     --batch_size 128 \
-    --edge_type only_property \
+    --edge_type bow \
     --lr 0.001 \
     --neg_ratio 10 \
     --keep_n_per_prop 30:10 \

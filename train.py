@@ -182,6 +182,8 @@ if __name__ == '__main__':
     else:
         device = torch.device('cuda')
 
+    label2ind = load_tsv_as_dict(os.path.join(args.dataset_dir, 'label2ind.txt'))
+
     # configs
     method = args.method
     lr = {'emb': 0.005, 'ggnn': 0.0001, 'cosine': 0.005, 'bow': 0.0001}[method]
@@ -200,7 +202,7 @@ if __name__ == '__main__':
     edge_type = args.edge_type
     num_workers = args.num_workers
     batch_size = args.batch_size
-    num_class_dict = {'nway': 16, 'pointwise': 1, 'pointwisemerge': 1, 'bow': 1}
+    num_class_dict = {'nway': len(label2ind), 'pointwise': 1, 'pointwisemerge': 1, 'bow': 1}
     num_graph_dict = {'nway': 1, 'pointwise': 2, 'pointwisemerge': 1, 'bow': 2}
     layer_timesteps = [3, 3]
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
@@ -248,7 +250,9 @@ if __name__ == '__main__':
         args.emb_file, debug=debug, emb_size=200, use_padding=True) \
         if args.emb_file else (None, None)
     #properties_as_relations = {'P31', 'P21', 'P527', 'P17'}  # for debug
-    properties_as_relations = load_tsv_as_dict(os.path.join(args.dataset_dir, 'pid2ind.tsv'), valuefunc=int)
+    #properties_as_relations = load_tsv_as_dict(os.path.join(args.dataset_dir, 'pid2ind.tsv'), valuefunc=int)
+    # TODO: add a file?
+    properties_as_relations = dict((pid, i) for i, ((pid, plabel), c) in enumerate(subprops))
     # add agg property and node
     properties_as_relations[AGG_PROP] = len(properties_as_relations)
     emb_id2ind[AGG_NODE] = len(emb_id2ind)
@@ -338,7 +342,7 @@ if __name__ == '__main__':
                       match=args.match)
     if args.load:
         print('load model from {}'.format(args.load))
-        model.load_state_dict(torch.load(args.load))
+        model.load_state_dict(torch.load(os.path.join(args.load, 'model.bin')))
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     '''
@@ -402,4 +406,5 @@ if __name__ == '__main__':
                 if args.save:
                     # save epoch with best dev metric
                     torch.save(model.state_dict(), os.path.join(args.save, 'model.bin'))
-                    rank_to_csv(test_ranks, os.path.join(args.save, 'ranks.csv'), key2name=pid2plabel)
+                    if test_ranks:
+                        rank_to_csv(test_ranks, os.path.join(args.save, 'ranks.csv'), key2name=pid2plabel)

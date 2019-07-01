@@ -260,6 +260,12 @@ def get_is_parent(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]):
     return is_parent
 
 
+def get_pid2plabel(subprops: List):
+    pid2plabel = dict(p[0] for p in subprops)
+    pid2plabel_ = lambda x: pid2plabel[x.split('_', 1)[0]]
+    return pid2plabel_
+
+
 def filter_prop_occ_by_subgraph_and_emb(prop: str,
                                         prop_occs: Union[List[Tuple[str, str]], Iterable[Tuple[str, str]]],
                                         subgraph_dict: Dict,
@@ -444,10 +450,17 @@ class PropertySubtree():
         shuffle(siblings)
         trs = int(len(siblings) * tr)
         devs = int(len(siblings) * dev)
-        tes = len(siblings) - tr - dev
-        test_props = siblings[trs + devs:]
+        tes = int(len(siblings) * te)
+        test_props = siblings[trs + devs:trs + devs + tes]
         dev_props = siblings[trs:trs + devs]
         train_props = siblings[:trs]
+        residue = siblings[trs + devs + tes:]
+        if len(residue) > 0:
+            # split the residue
+            all_props = [train_props, dev_props, test_props]
+            choices = np.random.choice(3, len(residue), p=[tr, dev, te])
+            for sibing, choice in zip(residue, choices):
+                all_props[choice].append(sibing)
         if len(train_props) <= 0 or len(dev_props) <= 0 or len(test_props) <= 0:
             # the number of samples is really small
             # we randomly split at this situation
@@ -457,8 +470,7 @@ class PropertySubtree():
             for sibing, choice in zip(siblings, choices):
                 all_props[choice].append(sibing)
         if allow_empty_split:
-            allow = len(train_props) >= 0 and len(dev_props) >= 0 and len(test_props) >= 0 and \
-                    (filter_set is None or parent in filter_set)
+            allow = filter_set is None or parent in filter_set
         else:
             allow = len(train_props) > 0 and len(dev_props) > 0 and len(test_props) > 0 and \
                     (filter_set is None or parent in filter_set)

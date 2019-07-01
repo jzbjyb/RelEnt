@@ -67,4 +67,4 @@ shuf data/split_merge_triples/property_occurrence_prop580k_split.tsv > \
 # replace parents
 python prop.py --task replace_by_hard_split \
     --inp data/property_occurrence_prop580k_split/subprops:${emb} \
-    --out data/property_occurrence_prop580k_split/subprops_hard
+    --out data/property_occurrence_prop580k_split

@@ -10,6 +10,7 @@ from random import shuffle
 import re
 from copy import deepcopy
 import shutil
+from operator import itemgetter
 from sklearn.metrics.pairwise import cosine_similarity
 from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, \
     hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file, PropertyOccurrence, read_subgraph_file, \
@@ -729,16 +730,18 @@ def replace_by_hard_split(args):
     # save subprop
     hard2p = dict((v, k) for k, v in p2hard.items())
     for i, ((pid, plabel), c) in enumerate(subprops_split):
-        if pid in p2hard and pid != p2hard[pid]:
-            nplabel = None
+        if pid in p2hard and pid != p2hard[pid]:  # modify original parent
             for j, (cpid, cplabel) in enumerate(c):
                 if cpid == p2hard[pid]:
                     c[j] = (pid, plabel)
-                    nplabel = cplabel
                     break
-            subprops_split[i] = ((p2hard[pid], nplabel), c)
-        elif pid in hard2p and pid != hard2p[pid]:
+            subprops_split[i] = ((p2hard[pid], pid2plabel[p2hard[pid]]), c)
+        elif pid in hard2p and pid != hard2p[pid]:  # modify original child
             subprops_split[i] = ((hard2p[pid], pid2plabel[hard2p[pid]]), c)
+        else:
+            for j, (cpid, cplabel) in enumerate(c):  # modify original parent in other's leaves
+                if cpid in p2hard:
+                    c[j] = (p2hard[cpid], pid2plabel[p2hard[cpid]])
 
     with open(os.path.join(args.out, 'subprops_hard'), 'w') as fout:
         for (pid, plabel), c in subprops_split:

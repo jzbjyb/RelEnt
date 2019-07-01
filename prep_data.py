@@ -28,6 +28,8 @@ if __name__ == '__main__':
     parser.add_argument('--train_dev_test', type=str, default='0.8:0.1:0.1')
     parser.add_argument('--max_occ_per_prop', type=int, default=5,
                         help='max occurrence kept for each property')
+    parser.add_argument('--min_occ_per_prop', type=int, default=None,
+                        help='min occurrence kept for each property')
     parser.add_argument('--num_occ_per_subgraph', type=int, default=1,
                         help='number of occurrences used for each property subgraph')
     parser.add_argument('--method', type=str, default='by_tree',
@@ -87,8 +89,8 @@ if __name__ == '__main__':
                                              subgraph_dict=subgraph_dict,
                                              emb_set=emb_set,
                                              max_occ_per_prop=args.max_occ_per_prop,
+                                             min_occ_per_prop=args.min_occ_per_prop,
                                              num_occ_per_subgraph=args.num_occ_per_subgraph,
-                                             min_occ_per_prop=None,
                                              populate_method='top_down',
                                              subtrees=subtrees,
                                              filter_pids=filter_pids)
@@ -99,6 +101,7 @@ if __name__ == '__main__':
                                          subgraph_dict=subgraph_dict,
                                          emb_set=emb_set,
                                          max_occ_per_prop=args.max_occ_per_prop,
+                                         min_occ_per_prop=args.min_occ_per_prop,
                                          num_occ_per_subgraph=args.num_occ_per_subgraph)
 
     print('{} out of {} property pass existence check'.format(len(poccs.pids), len(all_propids)))

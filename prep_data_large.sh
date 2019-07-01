@@ -4,24 +4,28 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data/analogy_dataset/easy_sibling_overlap
+data_dir=data/analogy_dataset/split_middle_overlap
 data_format=pointwise
-subgraph_file=data/subgraph/property_occurrence_all_shuf_top100k.subgraph
+subgraph_file=data/subgraph/property_occurrence_prop580k.subgraph
 #subgraph_file=data/property_occurrence_subtree.subgraph
-prop_dir=data/property_occurrence_all_shuf_top100k
+prop_dir=data/property_occurrence_prop580k_split
+#prop_file=data/property_occurrence_prop580k_split/subprops
+prop_file=data/property_occurrence_prop580k_split/subprops_hard
 method=by_entail-overlap
+emb_file=../pytorch_big_graph/emb/transe.txt
 
 mkdir -p ${data_dir}
 
 python prep_data.py \
-    --prop_file data/subprops.txt \
+    --prop_file ${prop_file} \
     --prop_dir ${prop_dir} \
     --subgraph_file ${subgraph_file} \
-    --emb_file data/emb/wikidata_translation_v1.tsv.id.QP \
+    --emb_file ${emb_file} \
     --out_dir ${data_dir} \
     --method ${method} \
     --train_dev_test 0.6:0.2:0.2 \
     --max_occ_per_prop 10000 \
+    --min_occ_per_prop 10 \
     --num_occ_per_subgraph 10 \
     --num_sample 100 \
     --contain_train \

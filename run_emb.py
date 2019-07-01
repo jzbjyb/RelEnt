@@ -22,6 +22,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_workers', type=int, default=8, help='number of workers')
     parser.add_argument('--seed', type=int, default=2019)
     parser.add_argument('--save', type=str, default=None)
+    parser.add_argument('--debug', action='store_true')
 
     parser.add_argument('--method', type=str, default='avg', help='which model to use')
     parser.add_argument('--filter_num_poccs', type=int, default=None, help='properties larger than this are kept')
@@ -55,6 +56,7 @@ if __name__ == '__main__':
         num_workers=args.num_workers,
         skip_split=args.skip_split,
         ori_subprops='data/subprops.txt',
+        debug=args.debug,
         sigma=1.0)
 
     if args.save:

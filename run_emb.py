@@ -16,15 +16,16 @@ if __name__ == '__main__':
     parser.add_argument('--subprop_file', type=str, required=True, help='subprop file')
     parser.add_argument('--emb_file', type=str, default=None, help='embedding file')
     parser.add_argument('--num_workers', type=int, default=8, help='number of workers')
+    parser.add_argument('--seed', type=int, default=2019)
 
     parser.add_argument('--method', type=str, default='avg', help='which model to use')
     parser.add_argument('--filter_num_poccs', type=int, default=None, help='properties larger than this are kept')
     parser.add_argument('--skip_split', action='store_true')
     args = parser.parse_args()
 
-    random.seed(2019)
-    np.random.seed(2019)
-    torch.manual_seed(2019)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     emb_id2ind, emb = read_embeddings_from_text_file(
         args.emb_file, debug=False, emb_size=200, use_padding=True)

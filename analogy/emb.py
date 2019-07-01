@@ -77,6 +77,11 @@ def sim_func(child_emb, parent_emb, method='cosine', sigma=1.0, kde_c=None, kde_
         parent_emb = np.mean(parent_emb, 0)
         return np.mean(cosine_similarity([child_emb], [parent_emb]))
 
+    if method == 'avg_euc':
+        child_emb = np.mean(child_emb, 0)
+        parent_emb = np.mean(parent_emb, 0)
+        return -np.mean(euclidean_distances([child_emb], [parent_emb]))
+
     if method == 'kde':
         if kde_c is None:
             kde_c = KernelDensity(kernel='gaussian', bandwidth=sigma).fit(child_emb)

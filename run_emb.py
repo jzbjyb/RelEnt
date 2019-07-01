@@ -57,4 +57,6 @@ if __name__ == '__main__':
         sigma=1.0)
 
     if args.save:
+        if not os.path.exists(args.save):
+            os.mkdir(args.save)
         rank_to_csv(ranks, os.path.join(args.save, 'ranks.csv'), key2name=pid2plabel)

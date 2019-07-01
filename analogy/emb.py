@@ -12,7 +12,6 @@ from scipy.stats import multivariate_normal
 from sklearn.neighbors.kde import KernelDensity
 from wikiutil.util import load_tsv_as_dict
 from wikiutil.property import read_subprop_file, get_is_parent, get_is_ancestor, get_pid2plabel, get_all_subtree
-from wikiutil.metric import rank_to_csv
 
 
 def get_rel(parent, child, is_parent, is_ancestor):
@@ -31,7 +30,7 @@ def get_label_dist(props, labels, is_parent, pid2plabel):
     for p in props:
         for l in labels:
             if (l, p) in is_parent:
-                dist.append(pid2plabel(l))
+                dist.append(pid2plabel[l])
     u, c = np.unique(dist, return_counts=True)
     print(sorted(zip(u, c), key=lambda x: -x[1]))
 
@@ -242,14 +241,4 @@ def compute_overlap(data_dir, split, poccs, subprops, emb, emb_id2ind, top=100, 
         print('correct list:')
         print(correct_li)
 
-    # save ranks
-    class pid2plabel_wrapper():
-        def __init__(self, pid2plabel):
-            self.pid2plabel = pid2plabel
-        def __getitem__(self, item):
-            pid = item.split('_', 1)
-            if len(pid) == 1:
-                return self.pid2plabel(pid[0])
-            return self.pid2plabel(pid[0]) + '_' + pid[1]
-    p2p = pid2plabel_wrapper(pid2plabel)
-    rank_to_csv(rank_dict, 'ranks.csv', key2name=p2p)
+    return rank_dict

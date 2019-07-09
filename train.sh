@@ -23,9 +23,9 @@ python train.py \
     --num_workers 4 \
     --method ggnn \
     --match concat \
-    --batch_size 128 \
+    --batch_size 256 \
     --edge_type bow \
-    --lr 0.001 \
+    --lr 0.0001 \
     --neg_ratio 10 \
     --keep_n_per_prop 30:10 \
     --save ${save_dir} \

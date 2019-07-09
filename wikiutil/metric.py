@@ -212,25 +212,32 @@ class AnalogyEval():
         return getattr(self, reduction + '_' + metric)(predictions)
 
 
-def accuracy_nway(predictions: List[Tuple[str, List, int]], method='macro', agg='product'):
+def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]], method='macro', agg='product', ind2label=None):
     assert method in {'macro', 'micro'}
     pid2acc = defaultdict(lambda: [])
     corr, total = 0, 0
+    ranks: Dict[str, List] = {}
+    label2ind = dict((v, k) for k, v in ind2label.items())
     for pid, logits, label in predictions:
-        c = int(np.argmax(logits) == label)  # TODO: relation with multiple parents
+        if pid in label2ind:
+            logits[label2ind[pid]] = -np.inf
+        ind = np.argsort(-logits)
+        ranks[pid] = [(ind2label[i], logits[i]) for i in ind]
+        c = int(ind[0] == label)  # TODO: relation with multiple parents
         pid2acc[pid].append(c)
         total += 1
         corr += c
     if method == 'macro':
         acc_per_prop = sorted([(k, np.mean(v)) for k, v in pid2acc.items()], key=lambda x: -x[1])
         acc = np.mean(list(map(itemgetter(1), acc_per_prop)))
-        print(np.mean([v[np.random.choice(len(v), 1)[0]] for k, v in pid2acc.items()]), len(acc_per_prop))
+        # TODO: to be consistent with overlap methods?
+        #print(np.mean([v[np.random.choice(len(v), 1)[0]] for k, v in pid2acc.items()]), len(acc_per_prop))
     elif method == 'micro':
         acc = corr / total
-    return acc, {}  # TODO: add rank results
+    return acc, ranks
 
 
-def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='macro', agg='product'):
+def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='macro', agg='product', **kwargs):
     # 'max': whether the class with max prob is parent
     # 'product': whether the parent is selected and non-ancestors are not selected
     # 'rank': whether ancestors get higher scores than non-ancestors
@@ -246,17 +253,10 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
         for parent in child2ancestor[child]:
             child2ancestor[child][parent] = np.mean(child2ancestor[child][parent])  # TODO: this is ensemble
     # get ranking for error analysis
-    def get_rel(parent, child):
-        if (parent, child) in is_parent:
-            return 'parent'
-        elif (parent, child) in is_ancestor:
-            return 'ancestor'
-        else:
-            return '*'
     ranks = {}
     for child in child2ancestor:
         ranks[child] = sorted(child2ancestor[child].items(), key=lambda x: -x[1])
-        ranks[child] = [(parent, pred, get_rel(parent, child)) for parent, pred in ranks[child]]
+        ranks[child] = [(parent, pred) for parent, pred in ranks[child]]
     # eval
     eval_result = []
     corr, total = 0, 0

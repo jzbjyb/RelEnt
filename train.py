@@ -12,8 +12,9 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, RandomSampler
 from wikiutil.data import PointwiseDataset, NwayDataset, PointwisemergeDataset, BowDataset
 from wikiutil.util import filer_embedding, load_tsv_as_dict, read_embeddings_from_text_file
-from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise, rank_to_csv
-from wikiutil.property import read_prop_file, read_subgraph_file, read_subprop_file
+from wikiutil.metric import AnalogyEval, accuracy_nway, accuracy_pointwise, rank_to_csv, get_ranks
+from wikiutil.property import read_prop_file, read_subgraph_file, read_subprop_file, \
+    get_is_parent, get_is_ancestor, get_all_subtree, get_pid2plabel
 from wikiutil.constant import AGG_NODE, AGG_PROP, PADDING
 from analogy.ggnn import GatedGraphNeuralNetwork
 
@@ -57,11 +58,11 @@ class Model(nn.Module):
         self.cosine_cla = lambda x: x + self.cosine_bias
 
         self.cla = nn.Sequential(
-            nn.Dropout(p=0.0),
-            nn.Linear(hidden_size * num_graph, 16),
+            nn.Dropout(p=0.5),
+            nn.Linear(hidden_size * num_graph, 128),
             nn.ReLU(),
-            nn.Dropout(p=0.0),
-            nn.Linear(16, num_class)
+            nn.Dropout(p=0.5),
+            nn.Linear(128, num_class)
         )
 
     def forward(self, data: Dict, labels: torch.LongTensor):
@@ -182,7 +183,8 @@ if __name__ == '__main__':
     else:
         device = torch.device('cuda')
 
-    label2ind = load_tsv_as_dict(os.path.join(args.dataset_dir, 'label2ind.txt'))
+    label2ind = load_tsv_as_dict(os.path.join(args.dataset_dir, 'label2ind.txt'), valuefunc=int)
+    ind2label = dict((v, k) for k, v in label2ind.items())
 
     # configs
     method = args.method
@@ -204,7 +206,7 @@ if __name__ == '__main__':
     batch_size = args.batch_size
     num_class_dict = {'nway': len(label2ind), 'pointwise': 1, 'pointwisemerge': 1, 'bow': 1}
     num_graph_dict = {'nway': 1, 'pointwise': 2, 'pointwisemerge': 1, 'bow': 2}
-    layer_timesteps = [3, 3]
+    layer_timesteps = [1]  # TODO debug
     Dataset = eval(args.dataset_format.capitalize() + 'Dataset')
     get_dataset_filepath = lambda split, preped=False: os.path.join(
         args.dataset_dir, split + '.' + args.dataset_format + ('.{}.prep'.format(edge_type) if preped else ''))
@@ -217,7 +219,10 @@ if __name__ == '__main__':
 
     # load properties
     subprops = read_subprop_file(args.subprop_file)
-    pid2plabel = dict(p[0] for p in subprops)
+    pid2plabel = get_pid2plabel(subprops)
+    subtrees, _ = get_all_subtree(subprops)
+    is_parent = get_is_parent(subprops)
+    is_ancestor = get_is_ancestor(subtrees)
 
     # load subgraph
     if args.preped:
@@ -265,7 +270,7 @@ if __name__ == '__main__':
     elif edge_type == 'property':
         num_edge_types = len(properties_as_relations)
     elif edge_type == 'bow':
-        num_edge_types = 2  # head and tail
+        num_edge_types = 4  # head and tail
     else:
         raise NotImplementedError
     if args.dataset_format == 'pointwisemerge':
@@ -280,7 +285,7 @@ if __name__ == '__main__':
         'edge_type': edge_type,
         'use_cache': use_cache,
         'use_pseudo_property': use_pseudo_property,
-        'use_top': True,  # TODO: set using external params
+        'use_top': False,  # TODO: set using external params
     }
     get_dataloader = lambda ds, shuffle, sampler=None: \
         DataLoader(ds, batch_size=batch_size, shuffle=shuffle, sampler=sampler,
@@ -299,7 +304,7 @@ if __name__ == '__main__':
         train_dataloader = get_dataloader(train_data, True)
     else:
         train_dataloader = get_dataloader(
-            train_data, False, RandomSampler(train_data, replacement=True, num_samples=50000))
+            train_data, False, RandomSampler(train_data, replacement=True, num_samples=10000))  # TODO debug
     dev_data = Dataset(get_dataset_filepath('dev', args.preped),
                        **dataset_params,
                        keep_n_per_prop=dt_keep_n_per_prop)
@@ -335,7 +340,7 @@ if __name__ == '__main__':
                       num_graph=num_graph_dict[args.dataset_format],
                       emb=emb,
                       padding_ind=0,  # the first position is padding embedding
-                      hidden_size=64,
+                      hidden_size=128,
                       method=method,
                       num_edge_types=num_edge_types,
                       layer_timesteps=layer_timesteps,
@@ -365,8 +370,7 @@ if __name__ == '__main__':
             dev_pred, dev_loss = one_epoch(args, 'dev', dev_dataloader, optimizer,
                                            device=device, show_progress=show_progress)
             print('init')
-            #print(np.mean(dev_loss), dev_metric.eval(dev_pred))
-            print(np.mean(dev_loss), accuracy(dev_pred, agg=eval_agg)[0])
+            print(np.mean(dev_loss), accuracy(dev_pred, agg=eval_agg, ind2label=ind2label)[0])
 
         # train, dev, test
         train_pred, train_loss = one_epoch(args, 'train', train_dataloader, optimizer,
@@ -377,21 +381,13 @@ if __name__ == '__main__':
                                          device=device, show_progress=show_progress)
 
         # evaluate
-        train_metric, _ = accuracy(train_pred, agg=eval_agg)
-        dev_metric, _ = accuracy(dev_pred, agg=eval_agg)
-        test_metric, test_ranks = accuracy(test_pred, agg=eval_agg)
+        train_metric, _ = accuracy(train_pred, agg=eval_agg, ind2label=ind2label)
+        dev_metric, _ = accuracy(dev_pred, agg=eval_agg, ind2label=ind2label)
+        test_metric, test_ranks = accuracy(test_pred, agg=eval_agg, ind2label=ind2label)
         print('epoch {:4d}\ttr_loss: {:>.3f}\tdev_loss: {:>.3f}\tte_loss: {:>.3f}'.format(
             epoch + 1, np.mean(train_loss), np.mean(dev_loss), np.mean(test_loss)), end='')
         print('\t\ttr_acc: {:>.3f}\tdev_acc: {:>.3f}\ttest_acc: {:>.3f}'.format(
             train_metric, dev_metric, test_metric))
-        '''
-        print('accuracy')
-        print(train_metirc.eval_by('property', 'accuracy', train_pred),
-              dev_metric.eval_by('property', 'accuracy', dev_pred))
-        print('correct_position')
-        print(train_metirc.eval_by('property', 'correct_position', train_pred),
-              dev_metric.eval_by('property', 'correct_position', dev_pred))
-        '''
 
         # early stop
         if args.patience:
@@ -407,4 +403,5 @@ if __name__ == '__main__':
                     # save epoch with best dev metric
                     torch.save(model.state_dict(), os.path.join(args.save, 'model.bin'))
                     if test_ranks:
-                        rank_to_csv(test_ranks, os.path.join(args.save, 'ranks.csv'), key2name=pid2plabel)
+                        rank_to_csv(get_ranks(test_ranks, is_parent=is_parent, is_ancestor=is_ancestor),
+                                    os.path.join(args.save, 'ranks.csv'), key2name=pid2plabel)

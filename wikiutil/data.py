@@ -275,7 +275,7 @@ class PropertySubgraph():
             # build adj list
             id2ind = DefaultOrderedDict(lambda: len(id2ind))  # entity/proerty id to index mapping
             pi = id2ind[self.pid]  # make sure that the central property is alway indexed as 0
-            adjs_dict: Dict[str, List] = {'head': [], 'tail': []}
+            adjs_dict: Dict[str, List] = {'head': [], 'tail': [], 'head_other': [], 'tail_other': []}
             for i, (hid, tid) in enumerate(self.occurrences):
                 adjs_dict['head'].append((id2ind[self.normalize(hid)], pi))
                 adjs_dict['tail'].append((id2ind[self.normalize(tid)], pi))
@@ -284,15 +284,13 @@ class PropertySubgraph():
                     for e1, pid, e2 in self.subgraph_dict[hid]:
                         if pid == self.pid:
                             continue
-                        adjs_dict['head'].append((id2ind[self.normalize(e1)], pi))
-                        adjs_dict['head'].append((id2ind[self.normalize(pid)], pi))
-                        adjs_dict['head'].append((id2ind[self.normalize(e2)], pi))
+                        adjs_dict['head_other'].append((id2ind[self.normalize(pid)], pi))
+                        adjs_dict['head_other'].append((id2ind[self.normalize(e2)], pi))
                     for e1, pid, e2 in self.subgraph_dict[tid]:
                         if pid == self.pid:
                             continue
-                        adjs_dict['tail'].append((id2ind[self.normalize(e1)], pi))
-                        adjs_dict['tail'].append((id2ind[self.normalize(pid)], pi))
-                        adjs_dict['tail'].append((id2ind[self.normalize(e2)], pi))
+                        adjs_dict['tail_other'].append((id2ind[self.normalize(pid)], pi))
+                        adjs_dict['tail_other'].append((id2ind[self.normalize(e2)], pi))
                 except KeyError:
                     raise DataPrepError
 

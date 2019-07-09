@@ -184,6 +184,11 @@ if __name__ == '__main__':
         label2ind = load_tsv_as_dict(os.path.join(args.load_split, 'label2ind.txt'))
     else:
         label2ind = DefaultOrderedDict(lambda: len(label2ind))  # collect labels
+
+    def get_all_occs(pid):
+        for occs in poccs.get_all_occs(pid, args.num_sample):
+            yield format_occs(pid, occs)
+
     for prop_split_name in ['train_prop', 'dev_prop', 'test_prop']:
         prop_split = eval(prop_split_name)
 
@@ -203,10 +208,6 @@ if __name__ == '__main__':
             for p1occs, p2occs in poccs.get_all_pairs(
                     pid1, pid2, args.num_sample, sam_for_pid1=pid1_num, sam_for_pid2=pid2_num):
                 yield format_occs(pid1, p1occs), format_occs(pid2, p2occs)
-
-        def get_all_occs(pid):
-            for occs in poccs.get_all_occs(pid, args.num_sample):
-                yield format_occs(pid, occs)
 
         # generate pair of property occurrences for binary classification
         if args.method in {'by_tree', 'within_tree', 'by_entail'}:
@@ -270,6 +271,11 @@ if __name__ == '__main__':
         with open(os.path.join(args.out_dir, 'label2ind.txt'), 'w') as fout:
             for label, ind in label2ind.items():
                 fout.write('{}\t{}\n'.format(label, ind))
+        # save parent property occurrences
+        with open(os.path.join(args.out_dir, 'label2occs.nway'), 'w') as fout:
+            for label, ind in label2ind.items():
+                for po in get_all_occs(label):
+                    fout.write('{}\t{}\n'.format(ind, po))
 
     elif args.method in {'by_entail', 'by_entail-overlap'}:
         # save parent properties (optional)

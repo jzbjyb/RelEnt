@@ -10,6 +10,7 @@ from random import shuffle
 import re
 from copy import deepcopy
 import shutil
+import pickle
 from operator import itemgetter
 from sklearn.metrics.pairwise import cosine_similarity
 from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, \
@@ -17,6 +18,7 @@ from wikiutil.property import get_sub_properties, read_subprop_file, get_all_sub
     read_prop_occ_file_from_dir, property_split
 from wikiutil.util import read_emb_ids, load_tsv_as_dict, load_tsv_as_list, read_embeddings_from_text_file
 from wikiutil.wikidata_query_service import get_property_occurrence
+from wikiutil.textual_relation import WikipediaDataset
 
 def subprop(args):
     all_props = []
@@ -749,6 +751,43 @@ def replace_by_hard_split(args):
                 pid, plabel, '\t'.join(['{},{}'.format(cpid, cplabel) for cpid, cplabel in c])))
 
 
+def link_entity_to_wikipedia(args, max_num_sent):
+    triple_file, wikidata2wikipedia_file, wikipedia_data_dir = args.inp.split(':')
+    # triple_file = 'data/split_merge_triples/property_occurrence_prop580k_split_shuf.tsv'
+    # wikidata2wikipedia_file = 'data/wikipedia/wikidata_map.enwiki'
+    # wikipedia_data_dir = 'data/wikipedia/en_extracted/'
+
+    print('load wikidata ...')
+    wikidata_ids = set()
+    with open(triple_file, 'r') as fin:
+        for l in fin:
+            h, r, t = l.strip().split('\t')
+            wikidata_ids.add(h)
+            wikidata_ids.add(t)
+
+    print('load wikipedia ...')
+    wikidata2wikipedia_title = {}
+    with open(wikidata2wikipedia_file, 'r') as fin:
+        for l in fin:
+            try:
+                wd, wp = l.rstrip('\n').split(' ||| ')
+                wp = wp.replace(' ', '_')
+            except:
+                print(l.rstrip('\n') + '$')
+                continue
+            wikidata2wikipedia_title[wd] = wp
+
+    print('build ...')
+    wp_dataset = WikipediaDataset(data_dir=wikipedia_data_dir)
+    sid2sent, entity2sid = wp_dataset.build_entity2sent_for_wikidata(
+        wikidata_ids=wikidata_ids, wikidata2wikipedia_title=wikidata2wikipedia_title, max_num_sent=max_num_sent)
+
+    with open(os.path.join(args.out, 'sid2sent.pkl'), 'wb') as fout:
+        pickle.dump(dict(sid2sent), fout)
+    with open(os.path.join(args.out, 'entity2sid.pkl'), 'wb') as fout:
+        pickle.dump(dict(entity2sid), fout)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
@@ -759,8 +798,9 @@ if __name__ == '__main__':
                                  'filter_triples', 'downsample_by_property',
                                  'downsample_by_property_and_popularity', 'merge_poccs',
                                  'get_useless_props', 'get_partial_order',
-                                 'split_leaf_properties', 'replace_by_hard_split'], required=True)
-    parser.add_argument('--inp', type=str, required=True)
+                                 'split_leaf_properties', 'replace_by_hard_split',
+                                 'link_entity_to_wikipedia'], required=True)
+    parser.add_argument('--inp', type=str, required=None)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
 
@@ -834,3 +874,5 @@ if __name__ == '__main__':
     elif args.task == 'replace_by_hard_split':
         # get hard parent for each split
         replace_by_hard_split(args)
+    elif args.task == 'link_entity_to_wikipedia':
+        link_entity_to_wikipedia(args, max_num_sent=1000)

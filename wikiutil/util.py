@@ -175,7 +175,8 @@ def read_embeddings_from_text_file(filepath: str,
                                    debug: bool = False,
                                    emb_size: int = None,
                                    first_line: bool = False,
-                                   use_padding: bool = False) -> Tuple[Dict[str, int], np.ndarray]:
+                                   use_padding: bool = False,
+                                   split_char: str = '\t') -> Tuple[Dict[str, int], np.ndarray]:
     print('load emb from {} ...'.format(filepath))
     id2ind = defaultdict(lambda: len(id2ind))
     emb = []
@@ -185,12 +186,12 @@ def read_embeddings_from_text_file(filepath: str,
         if first_line:
             embeddings_file.readline()
         for i, line in tqdm(enumerate(embeddings_file)):
-            token = line.split('\t', 1)[0]
+            token = line.split(split_char, 1)[0]
             _ = id2ind[token]
             if debug:
                 emb.append([0.1] * emb_size)
             else:
-                l = np.asarray(line.rstrip().split('\t')[1:], dtype='float32')
+                l = np.asarray(line.rstrip().split(split_char)[1:], dtype='float32')
                 if emb_size and len(l) != emb_size:
                     raise ValueError('emb dim incorrect')
                 emb.append(l)

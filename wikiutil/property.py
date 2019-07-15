@@ -728,7 +728,7 @@ class PropertyOccurrence():
             else:
                 new_occs = []
                 for i, occ in enumerate(occs):
-                    if i >= max_occ_per_prop:
+                    if max_occ_per_prop and i >= max_occ_per_prop:
                         break
                     new_occs.append(occ)
                 occs = new_occs

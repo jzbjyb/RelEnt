@@ -68,11 +68,12 @@ class FewRelDataset(TextualDataset):
         print('{} out of {} sents have multi-span entities'.format(num_multi_spans, num_sents))
 
 
-    def build_pid2context(self, in_place=False):
+    def build_pid2context(self, dist_thres: int, in_place=False):
         ''' build a mapping from pid to context, which is a dictionary of words and their counts '''
         pid2context: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(lambda: 0))
         for pid, sent, hid, tid, hrange, trange in self.iter():
-            context_words = self.get_context_words(sent, hrange, trange, self.context_method)
+            context_words = self.get_context_words(
+                sent, hrange, trange, self.context_method, dist_thres=dist_thres)
             for w in context_words:
                 pid2context[pid][w] += 1
         pid2context = dict(pid2context)
@@ -100,7 +101,8 @@ class FewRelDataset(TextualDataset):
                           sent: List[str],
                           e1_pos: List[int],
                           e2_pos: List[int],
-                          method: str = 'middle') -> List[str]:
+                          method: str = 'middle',
+                          dist_thres: int = None) -> List[str]:
         assert method in {'middle'}
         if method == 'middle':
             context = []
@@ -108,10 +110,12 @@ class FewRelDataset(TextualDataset):
                 context = sent[e1_pos[-1]:e2_pos[0]]
             elif e1_pos[0] > e2_pos[-1]:
                 context = sent[e2_pos[-1]:e1_pos[0]]
+            if dist_thres and len(context) > dist_thres:
+                return []
             return context
 
 
-    def get_coocc(self, hids: List[str], tids: List[str]):
+    def get_coocc(self, hids: List[str], tids: List[str], dist_thres: int):
         pocc2context: Dict[str, int] = defaultdict(lambda: 0)
         for hid, tid in zip(hids, tids):
             if hid not in self.entity2sid or tid not in self.entity2sid:
@@ -122,7 +126,8 @@ class FewRelDataset(TextualDataset):
                 sent = self.sid2sent[sid]
                 hrange = self.entity2sid[hid][sid]
                 trange = self.entity2sid[tid][sid]
-                context_words = self.get_context_words(sent, hrange, trange, method=self.context_method)
+                context_words = self.get_context_words(
+                    sent, hrange, trange, method=self.context_method, dist_thres=dist_thres)
                 for w in context_words:
                     pocc2context[w] += 1
         return dict(pocc2context)

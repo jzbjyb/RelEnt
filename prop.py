@@ -788,6 +788,24 @@ def link_entity_to_wikipedia(args, max_num_sent):
         pickle.dump(dict(entity2sid), fout)
 
 
+def wikidata2freebase(args):
+    nt_file = args.inp
+    count = 0
+    with open(nt_file, 'r') as fin, open(args.out, 'w') as fout:
+        for l in tqdm(fin, total=3127159097):
+            l = l.strip()
+            if l[-3] == '>':
+                continue
+            ls = l.strip().split(' ')
+            h, r, t = ls[:3]
+            if r == '<http://www.wikidata.org/prop/direct/P646>':
+                count += 1
+                h = h.rsplit('/', 1)[1][:-1]
+                t = t[1:-1]
+                fout.write('{}\t{}\n'.format(h, t))
+    print('{} wikidata -> freebase mappings'.format(count))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
@@ -799,7 +817,7 @@ if __name__ == '__main__':
                                  'downsample_by_property_and_popularity', 'merge_poccs',
                                  'get_useless_props', 'get_partial_order',
                                  'split_leaf_properties', 'replace_by_hard_split',
-                                 'link_entity_to_wikipedia'], required=True)
+                                 'link_entity_to_wikipedia', 'wikidata2freebase'], required=True)
     parser.add_argument('--inp', type=str, required=None)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -876,3 +894,5 @@ if __name__ == '__main__':
         replace_by_hard_split(args)
     elif args.task == 'link_entity_to_wikipedia':
         link_entity_to_wikipedia(args, max_num_sent=1000)
+    elif args.task == 'wikidata2freebase':
+        wikidata2freebase(args)

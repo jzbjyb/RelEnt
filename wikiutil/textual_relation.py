@@ -6,19 +6,20 @@ import numpy as np
 import bz2
 from tqdm import tqdm
 import spacy
+from spacy.tokens import Doc
 import pickle
 from copy import deepcopy
 
 
 def get_dep_path(doc: spacy.tokens.Doc, e1_idx: set, e2_idx: set) -> List[str]:
     # build parent -> (child, dep) and child -> (parent, dep) mappings
-    p2c: Dict[int, Tuple[int, str]] = {}
-    c2p: Dict[int, Tuple[int, str]] = {}
+    p2c: Dict[int, List[Tuple[int, str]]] = defaultdict(list)
+    c2p: Dict[int, List[Tuple[int, str]]] = defaultdict(list)
     for c, w in enumerate(doc):
         p = w.head.i
         dep = w.dep_
-        p2c[p] = (c, dep)
-        c2p[c] = (p, dep + '_')
+        p2c[p].append((c, dep))
+        c2p[c].append((p, dep + '_'))
 
     # search starting from each e1 index
     e1_idx = list(e1_idx)
@@ -34,19 +35,20 @@ def get_dep_path(doc: spacy.tokens.Doc, e1_idx: set, e2_idx: set) -> List[str]:
             for direction in [p2c, c2p]:
                 if idx not in direction:
                     continue
-                dep = direction[idx][1]
-                next = direction[idx][0]
-                if next not in went:
-                    went.add(next)
-                    next_to_go.append(next)
-                    nhist = deepcopy(hist)
-                    if len(nhist) > 0:  # not include starting node
-                        nhist.append(doc[idx].text)
-                    nhist.append(dep)
-                    next_history.append(nhist)
-                    if next in e2_idx:
-                        shortest = nhist
-                        break
+                for next, dep in direction[idx]:
+                    if next not in went:
+                        went.add(next)
+                        next_to_go.append(next)
+                        nhist = deepcopy(hist)
+                        if len(nhist) > 0:  # not include starting node
+                            nhist.append(doc[idx].text)
+                        nhist.append(dep)
+                        next_history.append(nhist)
+                        if next in e2_idx:
+                            shortest = nhist
+                            break
+                if shortest:
+                    break
             if shortest:
                 break
         to_go = next_to_go
@@ -55,6 +57,20 @@ def get_dep_path(doc: spacy.tokens.Doc, e1_idx: set, e2_idx: set) -> List[str]:
             break
 
     return shortest
+
+
+class CharTokenizer(object):
+    def __init__(self, vocab, char: str = ' '):
+        self.vocab = vocab
+        self.char = char
+
+
+    def __call__(self, text):
+        words = text.split(self.char)
+        # All tokens 'own' a subsequent space character in this tokenizer
+        spaces = [True] * len(words)
+        spaces[-1] = False
+        return Doc(self.vocab, words=words, spaces=spaces)
 
 
 class TextualDataset:
@@ -74,6 +90,8 @@ class TextualDataset:
 class FewRelDataset(TextualDataset):
     def __init__(self, datadir: str = None):
         super(FewRelDataset, self).__init__()
+        self.nlp = spacy.load('en_core_web_sm')
+        self.nlp.tokenizer = CharTokenizer(self.nlp.vocab, char='\t')
         if datadir:
             self.train_path = os.path.join(datadir, 'train.json')
             self.val_path = os.path.join(datadir, 'val.json')
@@ -93,11 +111,12 @@ class FewRelDataset(TextualDataset):
         return dict(merged)
 
 
-    def iter(self):
+    def iter(self, by_pid=False):
         num_multi_spans = 0
         num_sents = 0
         for pid, sents in self.all_raw.items():
             num_sents += len(sents)
+            sent_li, hid_li, tid_li, hrange_li, trange_li = [], [], [], [], []
             for sent in sents:
                 tokens = np.array(sent['tokens'])
                 hid = sent['h'][1]
@@ -108,18 +127,37 @@ class FewRelDataset(TextualDataset):
                     num_multi_spans += 1
                     continue
                 hrange, trange = hrange[0], trange[0]
-                yield pid, tokens, hid, tid, hrange, trange
+                if by_pid:
+                    sent_li.append(tokens)
+                    hid_li.append(hid)
+                    tid_li.append(tid)
+                    hrange_li.append(hrange)
+                    trange_li.append(trange)
+                else:
+                    yield pid, tokens, hid, tid, hrange, trange
+            if by_pid:
+                yield pid, sent_li, hid_li, tid_li, hrange_li, trange_li
+
         print('{} out of {} sents have multi-span entities'.format(num_multi_spans, num_sents))
 
 
-    def build_pid2context(self, dist_thres: int, context_method: str, in_place=False):
+    def build_pid2context(self,
+                          dist_thres: int,
+                          context_method: str,
+                          in_place: bool = False,
+                          max_num_sent: int = None):
         ''' build a mapping from pid to context, which is a dictionary of words and their counts '''
         pid2context: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(lambda: 0))
-        for pid, sent, hid, tid, hrange, trange in self.iter():
-            context_words = self.get_context_words(
-                sent, hrange, trange, context_method, dist_thres=dist_thres)
-            for w in context_words:
-                pid2context[pid][w] += 1
+        for pid, sent_li, hid_li, tid_li, hrange_li, trange_li in tqdm(self.iter(by_pid=True)):
+            if max_num_sent:
+                sent_li = sent_li[:max_num_sent]
+                hrange_li = hrange_li[:max_num_sent]
+                trange_li = trange_li[:max_num_sent]
+            context_words_li = self.get_context_words(
+                sent_li, hrange_li, trange_li, method=context_method, dist_thres=dist_thres)
+            for context_words in context_words_li:
+                for w in context_words:
+                    pid2context[pid][w] += 1
         pid2context = dict(pid2context)
         if not in_place:
             return pid2context
@@ -142,21 +180,34 @@ class FewRelDataset(TextualDataset):
 
 
     def get_context_words(self,
-                          sent: List[str],
-                          e1_pos: List[int],
-                          e2_pos: List[int],
+                          sent_li: List[List[str]],
+                          e1_pos_li: List[List[int]],
+                          e2_pos_li: List[List[int]],
                           method: str = 'middle',
-                          dist_thres: int = None) -> List[str]:
-        assert method in {'middle'}
+                          dist_thres: int = None) -> List[List[str]]:
+        assert method in {'middle', 'dep'}
+        context_li = []
+
         if method == 'middle':
-            context = []
-            if e1_pos[-1] < e2_pos[0]:
-                context = sent[e1_pos[-1]:e2_pos[0]]
-            elif e1_pos[0] > e2_pos[-1]:
-                context = sent[e2_pos[-1]:e1_pos[0]]
-            if dist_thres and len(context) > dist_thres:
-                return []
-            return context
+            for sent, e1_pos, e2_pos in zip(sent_li, e1_pos_li, e2_pos_li):
+                context = []
+                if e1_pos[-1] < e2_pos[0]:
+                    context = sent[e1_pos[-1]:e2_pos[0]]
+                elif e1_pos[0] > e2_pos[-1]:
+                    context = sent[e2_pos[-1]:e1_pos[0]]
+                if dist_thres and len(context) > dist_thres:
+                    context = []
+                context_li.append(context)
+
+        elif method == 'dep':
+            sent_li = ['\t'.join(sent) for sent in sent_li]
+            doc_li = self.nlp.pipe(sent_li)
+            for doc, e1_pos, e2_pos in zip(doc_li, e1_pos_li, e2_pos_li):
+                dep_path = get_dep_path(doc, set(e1_pos), set(e2_pos))
+                if len(dep_path) <= dist_thres:
+                    context_li.append(dep_path)
+
+        return context_li
 
 
     def get_coocc(self, hids: List[str], tids: List[str], context_method: str, dist_thres: int):

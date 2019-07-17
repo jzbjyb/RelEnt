@@ -672,6 +672,14 @@ def get_is_ancestor(subtrees: List[PropertySubtree]):
     return is_ancestor
 
 
+def get_leaves(subtrees: List[PropertySubtree]):
+    leaves = set()
+    for subtree in subtrees:
+        for l in subtree.traverse(only_leaves=True):
+            leaves.add(l)
+    return leaves
+
+
 def remove_common_child(subtrees: List[PropertySubtree]):
     ''' if a property has more than one parents, only keep the deepest one '''
     chid2parents: Dict[str, Dict] = defaultdict(lambda: {})

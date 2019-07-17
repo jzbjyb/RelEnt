@@ -796,8 +796,12 @@ def wikidata2freebase(args):
             l = l.strip()
             if l[-3] == '>':
                 continue
+            if l[-3] != '"':
+                continue
             ls = l.strip().split(' ')
             h, r, t = ls[:3]
+            if not t.startswith('"/m/'):
+                continue
             if r == '<http://www.wikidata.org/prop/direct/P646>':
                 count += 1
                 h = h.rsplit('/', 1)[1][:-1]

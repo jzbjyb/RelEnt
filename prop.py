@@ -810,6 +810,70 @@ def wikidata2freebase(args):
     print('{} wikidata -> freebase mappings'.format(count))
 
 
+def ner_on_wikipedia(args, max_num_occ=None, max_num_sent=None):
+    from wikiutil.textual_relation import ner_nlp
+
+    data_dir, prop_occ_dir, wikipedia_textual_dir = args.inp.split(':')
+
+    # get all pids
+    all_pids = set()
+    all_pids |= set(load_tsv_as_dict(os.path.join(data_dir, 'train.prop')).keys())
+    all_pids |= set(load_tsv_as_dict(os.path.join(data_dir, 'dev.prop')).keys())
+    all_pids |= set(load_tsv_as_dict(os.path.join(data_dir, 'test.prop')).keys())
+    print('totally {} pids'.format(len(all_pids)))
+
+    # load property occurrence
+    poccs = PropertyOccurrence.build(sorted(all_pids), prop_occ_dir)
+    print('totally {} pids with occs'.format(len(poccs.pid2occs)))
+
+    # load wikipedia
+    wp_dataset = WikipediaDataset.from_entity2sent(wikipedia_textual_dir)
+
+    # collect sentences
+    sids = set()
+    for pid, occs in poccs.pid2occs.items():
+        shuffle(occs)
+        if max_num_occ:
+            occs = occs[:max_num_occ]
+        for hid, tid in occs:
+            if hid not in wp_dataset.entity2sid or tid not in wp_dataset.entity2sid:
+                continue
+            h_sids = set(wp_dataset.entity2sid[hid].keys())
+            t_sids = set(wp_dataset.entity2sid[tid].keys())
+            join = h_sids & t_sids
+            any = (h_sids | t_sids) - (h_sids & t_sids)
+            join = list(join)
+            any = list(any)
+            shuffle(join)
+            shuffle(any)
+            if max_num_sent:
+                sids.update((join + any)[:max_num_sent])
+            else:
+                sids.update(join + any)
+    print('totally {} sentences to be ner'.format(len(sids)))
+
+    # ner
+    sent_li = []
+    sid_li = []
+    for sid in sids:
+        if sid not in wp_dataset.sid2sent:
+            continue
+        sid_li.append(sid)
+        sent_li.append(wp_dataset.sid2sent[sid])
+    with open(args.out, 'w') as fout:
+        for i, doc in tqdm(enumerate(ner_nlp.pipe(sent_li))):
+            sid = sid_li[i]
+            fout.write('{}'.format(sid))
+            for ent in doc.ents:
+                ent_str = ent.text
+                ent_st = ent.start_char
+                ent_ed = ent.end_char
+                label = ent.label_
+                ent_str.replace('\t', '<TAB>')
+                fout.write('\t{}\t{}\t{}\t{}'.format(ent_st, ent_ed, label, ent_str))
+            fout.write('\n')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
@@ -821,7 +885,8 @@ if __name__ == '__main__':
                                  'downsample_by_property_and_popularity', 'merge_poccs',
                                  'get_useless_props', 'get_partial_order',
                                  'split_leaf_properties', 'replace_by_hard_split',
-                                 'link_entity_to_wikipedia', 'wikidata2freebase'], required=True)
+                                 'link_entity_to_wikipedia', 'wikidata2freebase',
+                                 'ner_on_wikipedia'], required=True)
     parser.add_argument('--inp', type=str, required=None)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -900,3 +965,5 @@ if __name__ == '__main__':
         link_entity_to_wikipedia(args, max_num_sent=1000)
     elif args.task == 'wikidata2freebase':
         wikidata2freebase(args)
+    elif args.task == 'ner_on_wikipedia':
+        ner_on_wikipedia(args, max_num_occ=100, max_num_sent=10)

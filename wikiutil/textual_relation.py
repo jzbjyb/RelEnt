@@ -9,6 +9,9 @@ import spacy
 from spacy.tokens import Doc
 import pickle
 from copy import deepcopy
+from random import shuffle
+
+ner_nlp = spacy.load('xx_ent_wiki_sm', disable=['parser', 'tagger'])
 
 
 def get_dep_path(doc: spacy.tokens.Doc, e1_idx: set, e2_idx: set) -> List[str]:
@@ -349,65 +352,69 @@ class WikipediaDataset(TextualDataset):
         elif method == 'dep':
             boundary_li = []
 
-        for sent, e1_pos, e2_pos in zip(sent_li, e1_pos_li, e2_pos_li):
+        for sent, e1_poss, e2_poss in zip(sent_li, e1_pos_li, e2_pos_li):
             # find the closest e1 and e2
-            e1_pos_mid = np.array([(s + e) / 2 for s, e in e1_pos])
-            e2_pos_mid = np.array([(s + e) / 2 for s, e in e2_pos])
+            e1_pos_mid = np.array([(s + e) / 2 for s, e in e1_poss])
+            e2_pos_mid = np.array([(s + e) / 2 for s, e in e2_poss])
             dist = np.abs(e1_pos_mid.reshape(-1, 1) - e2_pos_mid.reshape(1, -1))
-            pos = np.argmin(dist)
-            e1_pos = e1_pos[pos // len(e2_pos_mid)]
-            e2_pos = e2_pos[pos % len(e2_pos_mid)]
+            for pos in np.argsort(dist.reshape(-1)):
+                e1_pos = e1_poss[pos // len(e2_pos_mid)]
+                e2_pos = e2_poss[pos % len(e2_pos_mid)]
 
-            # build context
-            if method == 'middle':
-                if e1_pos[-1] < e2_pos[0]:
-                    context = sent[e1_pos[-1]:e2_pos[0]]
-                elif e1_pos[0] > e2_pos[-1]:
-                    context = sent[e2_pos[-1]:e1_pos[0]]
-                else:  # overlap entities
-                    continue
-                if len(context) >= 1000:  # TODO: a heurist to avoid long distence
-                    continue
-                to_spacy_li.append(context)
-            elif method == 'dep':
-                st1, ed1 = e1_pos[0], e1_pos[-1]
-                st2, ed2 = e2_pos[0], e2_pos[-1]
-                if ed1 <= st2:
-                    context = sent[ed1:st2]
-                elif ed2 <= st1:
-                    context = sent[ed2:st1]
-                else:  # overlap entities
-                    continue
-                if len(context) >= 100:  # TODO: a heurist to avoid long distence
-                    continue
+                # build context
+                if method == 'middle':
+                    if e1_pos[-1] < e2_pos[0]:
+                        context = sent[e1_pos[-1]:e2_pos[0]]
+                    elif e1_pos[0] > e2_pos[-1]:
+                        context = sent[e2_pos[-1]:e1_pos[0]]
+                    else:  # overlap entities
+                        continue
+                    if len(context) >= 1000:  # TODO: a heurist to avoid long distence
+                        continue
+                    to_spacy_li.append(context)
+                elif method == 'dep':
+                    st1, ed1 = e1_pos[0], e1_pos[-1]
+                    st2, ed2 = e2_pos[0], e2_pos[-1]
+                    if ed1 <= st2:
+                        context = sent[ed1:st2]
+                    elif ed2 <= st1:
+                        context = sent[ed2:st1]
+                    else:  # overlap entities
+                        continue
+                    if len(context) >= 100:  # TODO: a heurist to avoid long distence
+                        continue
 
-                # locate the paragraph using newline
-                para_st, para_ed = 0, len(sent)  # default is the first and last token of the whole document
-                for i in range(min(st1, st2) - 1, -1, -1):  # find the start location of the paragraph
-                    if sent[i] == '\n':
-                        para_st = i + 1
-                        break
-                for i in range(max(ed1, ed2), len(sent)):  # find the end location of the paragraph
-                    if sent[i] == '\n':
-                        para_ed = i
-                        break
-                para = sent[para_st:para_ed]
-                st1, ed1, st2, ed2 = [idx - para_st for idx in [st1, ed1, st2, ed2]]
+                    # locate the paragraph using newline
+                    para_st, para_ed = 0, len(sent)  # default is the first and last token of the whole document
+                    for i in range(min(st1, st2) - 1, -1, -1):  # find the start location of the paragraph
+                        if sent[i] == '\n':
+                            para_st = i + 1
+                            break
+                    for i in range(max(ed1, ed2), len(sent)):  # find the end location of the paragraph
+                        if sent[i] == '\n':
+                            para_ed = i
+                            break
+                    para = sent[para_st:para_ed]
+                    st1, ed1, st2, ed2 = [idx - para_st for idx in [st1, ed1, st2, ed2]]
 
-                to_spacy_li.append(para)
-                boundary_li.append((st1, ed1, st2, ed2))
+                    to_spacy_li.append(para)
+                    boundary_li.append((st1, ed1, st2, ed2))
 
         # do spacy
         context_li = []
         if method == 'middle':
             if tokenize:
                 doc_li = self.nlp.pipe(to_spacy_li)
+                for doc in doc_li:
+                    context = [t.text for t in doc]
+                    if dist_thres and len(context) <= dist_thres:
+                        context_li.append(context)
             else:
                 doc_li = to_spacy_li
-            for doc in doc_li:
-                context = [t.text for t in doc]
-                if dist_thres and len(context) <= dist_thres:  # two entities are too far from each other
-                    context_li.append(context)
+                for doc in doc_li:
+                    context = doc.strip().split()
+                    if dist_thres and len(context) <= dist_thres:
+                        context_li.append(context)
         elif method == 'dep':
             doc_li = self.nlp.pipe(to_spacy_li)
             for doc, boundary in zip(doc_li, boundary_li):
@@ -431,21 +438,58 @@ class WikipediaDataset(TextualDataset):
                   tids: List[str],
                   context_method: str,
                   dist_thres: int,
-                  max_num_sent: int = None):  # TODO: restrict the number of sentences used
+                  max_num_sent: int = None,
+                  entityname2id: Dict[str, List[str]] = None):
 
-        # collect sentences
-        sent_li, hrange_li, trange_li = [], [], []
+        # get all sentence id
+        sids = set()
         for hid, tid in zip(hids, tids):
             if hid not in self.entity2sid or tid not in self.entity2sid:
                 continue
             h_sids = set(self.entity2sid[hid].keys())
             t_sids = set(self.entity2sid[tid].keys())
+            join = h_sids & t_sids
+            any = (h_sids | t_sids) - (h_sids & t_sids)
+            join = list(join)
+            any = list(any)
+            shuffle(join)
+            shuffle(any)
+            if max_num_sent:
+                sids.update((join + any)[:max_num_sent])
+            else:
+                sids.update(join + any)
+
+        # do ner to get more mentions
+        if entityname2id is not None:
+            extended_entity2sid = self.extend_entity2sent(entityname2id, sids)
+            print('extend {} from {} sentences'.format(len(extended_entity2sid), len(sids)))
+        else:
+            extended_entity2sid = defaultdict(lambda: defaultdict(set))
+
+        # add original entity2sid
+        for hid, tid in zip(hids, tids):
+            for id_ in [hid, tid]:
+                if id_ in self.entity2sid:
+                    for sid in self.entity2sid[id_]:
+                        extended_entity2sid[id_][sid].update(self.entity2sid[id_][sid])
+
+        extended_entity2sid: Dict[str, Dict[int, List]] = \
+            dict((entity, dict((k, list(v)) for k, v in sents.items()))
+                 for entity, sents in extended_entity2sid.items())
+
+        # collect sentences
+        sent_li, hrange_li, trange_li = [], [], []
+        for hid, tid in zip(hids, tids):
+            if hid not in extended_entity2sid or tid not in extended_entity2sid:
+                continue
+            h_sids = set(extended_entity2sid[hid].keys())
+            t_sids = set(extended_entity2sid[tid].keys())
             for i, sid in enumerate(h_sids & t_sids):
-                if max_num_sent and i >= max_num_sent:
-                    break
+                if sid not in sids:
+                    continue
                 sent = self.sid2sent[sid]
-                hrange = self.entity2sid[hid][sid]
-                trange = self.entity2sid[tid][sid]
+                hrange = extended_entity2sid[hid][sid]
+                trange = extended_entity2sid[tid][sid]
                 sent_li.append(sent)
                 hrange_li.append(hrange)
                 trange_li.append(trange)
@@ -458,3 +502,41 @@ class WikipediaDataset(TextualDataset):
                 pocc2context[w] += 1
 
         return dict(pocc2context)
+
+
+    def extend_entity2sent(self,
+                           entityname2id: Dict[str, List[str]],
+                           sids: set = None,
+                           show_progress: bool = False):
+        extended_entity2sid: Dict[str, Dict[int, set]] = defaultdict(lambda: defaultdict(set))
+        if sids is None:
+            sids = self.sid2sent.keys()
+        sent_li = []
+        for sid in sids:
+            if sid not in self.sid2sent:
+                continue
+            sent_li.append(self.sid2sent[sid])
+        for doc in tqdm(ner_nlp.pipe(sent_li), disable=not show_progress):
+            for ent in doc.ents:
+                ent_str = ent.text
+                ent_st = ent.start_char
+                ent_ed = ent.end_char
+                wiki_entities = match_mention_entity(ent_str, entityname2id)
+                for we in wiki_entities:
+                    extended_entity2sid[we][sid].add((ent_st, ent_ed))
+        return extended_entity2sid
+
+
+def entity_idname_conversion(entityid2name: Dict[str, List[str]]):
+    result: Dict[str, List[str]] = defaultdict(list)
+    for k, names in entityid2name.items():
+        for name in names:  # TODO: lower?
+            result[name].append(k)
+    return result
+
+
+def match_mention_entity(mention: str, entityname2id: Dict[str, List[str]]) -> List[str]:
+    mention = mention.lower()
+    if mention in entityname2id:
+        return entityname2id[mention]
+    return []

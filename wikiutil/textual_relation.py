@@ -439,7 +439,8 @@ class WikipediaDataset(TextualDataset):
                   context_method: str,
                   dist_thres: int,
                   max_num_sent: int = None,
-                  entityname2id: Dict[str, List[str]] = None):
+                  entityname2id: Dict[str, List[str]] = None,
+                  tokenize: bool = True):
 
         # get all sentence id
         sids = set()
@@ -487,6 +488,8 @@ class WikipediaDataset(TextualDataset):
             for i, sid in enumerate(h_sids & t_sids):
                 if sid not in sids:
                     continue
+                if sid not in self.sid2sent:
+                    continue
                 sent = self.sid2sent[sid]
                 hrange = extended_entity2sid[hid][sid]
                 trange = extended_entity2sid[tid][sid]
@@ -497,7 +500,7 @@ class WikipediaDataset(TextualDataset):
         # find context
         pocc2context: Dict[str, int] = defaultdict(lambda: 0)
         for context_words in self.get_context_words(
-                sent_li, hrange_li, trange_li, tokenize=True, dist_thres=dist_thres, method=context_method):
+                sent_li, hrange_li, trange_li, tokenize=tokenize, dist_thres=dist_thres, method=context_method):
             for w in context_words:
                 pocc2context[w] += 1
 
@@ -528,15 +531,15 @@ class WikipediaDataset(TextualDataset):
 
 
 def entity_idname_conversion(entityid2name: Dict[str, List[str]]):
-    result: Dict[str, List[str]] = defaultdict(list)
+    result: Dict[str, set[str]] = defaultdict(set)
     for k, names in entityid2name.items():
         for name in names:  # TODO: lower?
-            result[name].append(k)
+            result[name].add(k)
     return result
 
 
 def match_mention_entity(mention: str, entityname2id: Dict[str, List[str]]) -> List[str]:
-    mention = mention.lower()
+    #mention = mention.lower()  # TODO: lower?
     if mention in entityname2id:
         return entityname2id[mention]
     return []

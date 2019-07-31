@@ -10,6 +10,10 @@ from spacy.tokens import Doc
 import pickle
 from copy import deepcopy
 from random import shuffle
+from pathlib import Path
+import multiprocessing
+
+from .load_sling_documents import load, get_mentions
 
 ner_nlp = spacy.load('xx_ent_wiki_sm', disable=['parser', 'tagger'])
 
@@ -528,6 +532,61 @@ class WikipediaDataset(TextualDataset):
                 for we in wiki_entities:
                     extended_entity2sid[we][sid].add((ent_st, ent_ed))
         return extended_entity2sid
+
+
+class SlingDataset():
+    def __init__(self, record_dir: str):
+        self.record_dir = record_dir
+
+
+    def build_entity2sent(self,
+                          wikidata_ids: set,
+                          max_num_sent: int = None,
+                          dump_dir: str = False,
+                          load_tokens: bool = True,
+                          num_workers: int = None):
+        # init data structure
+        vocab: Dict[str, int] = defaultdict(lambda: len(vocab))
+        _ = vocab['<PAD>']
+        sid2sent: Dict[int, List[int]] = {}
+        entity2sid: Dict[str, Dict[int, set]] = defaultdict(lambda: defaultdict(set))
+
+        # iterate over all mentions
+        record_dir = Path(self.record_dir)
+        record_files = record_dir.glob('*.rec')
+        for rec_file in record_files:
+            rec_file = str(rec_file)
+            print('loading {}'.format(rec_file))
+            for i, (doc, (wpid, _, _)) in tqdm(enumerate(load(rec_file, load_tokens=load_tokens))):
+                hit = False
+                for mention in get_mentions(doc):
+                    start, end, wdid = mention
+                    if wdid not in wikidata_ids:
+                        continue
+                    if max_num_sent and len(entity2sid[wdid]) >= max_num_sent:
+                        # skip when too many sentences are stored for this wikidata item
+                        continue
+                    hit = True
+                    entity2sid[wdid][wpid].add((start, end))
+                if load_tokens and hit:
+                    sid2sent[wpid] = [vocab[t] for t in doc.tokens]  # save sentence
+                elif hit:
+                    sid2sent[wpid] = None  # placeholder
+        vocab = dict(vocab)
+        entity2sid = dict((k, dict(v)) for k, v in entity2sid.items())
+
+        print('{} sentences, {} entities found'.format(len(sid2sent), len(entity2sid)))
+
+        # dump to disk
+        if dump_dir:
+            with open(os.path.join(dump_dir, 'sid2sent.pkl'), 'wb') as fout:
+                pickle.dump(sid2sent, fout)
+            with open(os.path.join(dump_dir, 'entity2sid.pkl'), 'wb') as fout:
+                pickle.dump(entity2sid, fout)
+            with open(os.path.join(dump_dir, 'vocab.pkl'), 'wb') as fout:
+                pickle.dump(vocab, fout)
+        else:
+            return sid2sent, entity2sid, vocab
 
 
 def entity_idname_conversion(entityid2name: Dict[str, List[str]]):

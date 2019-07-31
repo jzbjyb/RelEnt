@@ -18,7 +18,7 @@ from wikiutil.property import get_sub_properties, read_subprop_file, get_all_sub
     read_prop_occ_file_from_dir, property_split
 from wikiutil.util import read_emb_ids, load_tsv_as_dict, load_tsv_as_list, read_embeddings_from_text_file
 from wikiutil.wikidata_query_service import get_property_occurrence
-from wikiutil.textual_relation import WikipediaDataset
+from wikiutil.textual_relation import WikipediaDataset, SlingDataset
 
 def subprop(args):
     all_props = []
@@ -788,6 +788,25 @@ def link_entity_to_wikipedia(args, max_num_sent):
         pickle.dump(dict(entity2sid), fout)
 
 
+def link_entity_to_wikipedia_by_sling(args, max_num_sent):
+    triple_file, sling_record_dir = args.inp.split(':')
+    # triple_file = 'data/split_merge_triples/property_occurrence_prop580k_split_shuf.tsv'
+    # sling_record_dir = 'data/sling_rec/'
+
+    print('load wikidata ...')
+    wikidata_ids = set()
+    with open(triple_file, 'r') as fin:
+        for l in fin:
+            h, r, t = l.strip().split('\t')
+            wikidata_ids.add(h)
+            wikidata_ids.add(t)
+
+    print('build ...')
+    sling_dataset = SlingDataset(record_dir=sling_record_dir)
+    sling_dataset.build_entity2sent(wikidata_ids=wikidata_ids, max_num_sent=max_num_sent,
+                                    dump_dir=args.out, load_tokens=False)
+
+
 def wikidata2freebase(args):
     nt_file = args.inp
     count = 0
@@ -886,7 +905,7 @@ if __name__ == '__main__':
                                  'get_useless_props', 'get_partial_order',
                                  'split_leaf_properties', 'replace_by_hard_split',
                                  'link_entity_to_wikipedia', 'wikidata2freebase',
-                                 'ner_on_wikipedia'], required=True)
+                                 'ner_on_wikipedia', 'link_entity_to_wikipedia_by_sling'], required=True)
     parser.add_argument('--inp', type=str, required=None)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -963,6 +982,8 @@ if __name__ == '__main__':
         replace_by_hard_split(args)
     elif args.task == 'link_entity_to_wikipedia':
         link_entity_to_wikipedia(args, max_num_sent=1000)
+    elif args.task == 'link_entity_to_wikipedia_by_sling':
+        link_entity_to_wikipedia_by_sling(args, max_num_sent=10000)
     elif args.task == 'wikidata2freebase':
         wikidata2freebase(args)
     elif args.task == 'ner_on_wikipedia':

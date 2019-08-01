@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple, Iterable
+from typing import Dict, List, Tuple, Iterable, Union
 import os
 import json
 from collections import defaultdict
@@ -14,6 +14,7 @@ from pathlib import Path
 import multiprocessing
 
 from .load_sling_documents import load, get_mentions
+from .util import load_tsv_as_dict
 
 ner_nlp = spacy.load('xx_ent_wiki_sm', disable=['parser', 'tagger'])
 
@@ -535,16 +536,59 @@ class WikipediaDataset(TextualDataset):
 
 
 class SlingDataset():
-    def __init__(self, record_dir: str):
+    def __init__(self, record_dir: str = None):
         self.record_dir = record_dir
+
+
+    @classmethod
+    def from_entity2sent(cls, dump_dir: str):
+        print('load from {} ...'.format(dump_dir))
+        with open(os.path.join(dump_dir, 'entity2sid.pkl'), 'rb') as fin:
+            entity2sid = pickle.load(fin)
+        inst = cls()
+        inst.entity2sid = entity2sid
+        return inst
+
+
+    @staticmethod
+    def load_sentence(sent_file: str, vocab_file: str):
+        sid2sent: Dict[int, List[int]] = {}
+        with open(sent_file, 'r') as fin:
+            for i, l in tqdm(enumerate(fin)):
+                sid, tokens = l.rstrip('\n').split('\t')
+                sid = int(sid)
+                tokens = list(map(int, tokens.split(' ')))
+                sid2sent[sid] = tokens
+        wid2token = dict((v, k) for k, v in load_tsv_as_dict(vocab_file, valuefunc=int).items())
+        return sid2sent, wid2token
+
+
+    def extract_wikipedia_text(self, dump_dir: str):
+        vocab: Dict[str, int] = defaultdict(lambda: len(vocab))
+        _ = vocab['<PAD>']
+
+        record_dir = Path(self.record_dir)
+        record_files = record_dir.glob('*.rec')
+        num_docs = 0
+        with open(os.path.join(dump_dir, 'wp_tokens.txt'), 'w') as fout:
+            for rec_file in record_files:
+                rec_file = str(rec_file)
+                print('loading {}'.format(rec_file))
+                for i, (doc, (wpid, _, _)) in tqdm(enumerate(load(rec_file, load_tokens=True, load_mentions=False))):
+                    fout.write('{}\t{}\n'.format(wpid, ' '.join(map(lambda t: str(vocab[t]), doc.tokens))))
+                    num_docs += 1
+        with open(os.path.join(dump_dir, 'vocab.tsv'), 'w') as fout:
+            for k, v in vocab.items():
+                fout.write('{}\t{}\n'.format(k, v))
+
+        print('#doc {}, #vocab {}'.format(num_docs, len(vocab)))
 
 
     def build_entity2sent(self,
                           wikidata_ids: set,
                           max_num_sent: int = None,
                           dump_dir: str = False,
-                          load_tokens: bool = True,
-                          num_workers: int = None):
+                          load_tokens: bool = True):
         # init data structure
         vocab: Dict[str, int] = defaultdict(lambda: len(vocab))
         _ = vocab['<PAD>']
@@ -587,6 +631,69 @@ class SlingDataset():
                 pickle.dump(vocab, fout)
         else:
             return sid2sent, entity2sid, vocab
+
+
+    def get_coocc_sentid(self,
+                         hids: List[str],
+                         tids: List[str],
+                         dist_thres: int):
+        sents = set()
+        num_coocc = 0
+        for hid, tid in zip(hids, tids):
+            if hid not in self.entity2sid or tid not in self.entity2sid:
+                continue
+            hid_sids = set(self.entity2sid[hid].keys())
+            tid_sids = set(self.entity2sid[tid].keys())
+            both_sids = hid_sids & tid_sids
+            for sid in both_sids:
+                hid_pos_li = self.entity2sid[hid][sid]
+                tid_pos_li = self.entity2sid[tid][sid]
+
+                hid_pos_li = np.array([(s + e) / 2 for s, e in hid_pos_li])
+                tid_pos_li = np.array([(s + e) / 2 for s, e in tid_pos_li])
+
+                dist = np.abs(hid_pos_li.reshape(-1, 1) - tid_pos_li.reshape(1, -1))
+                coocc = np.sum(dist <= dist_thres)
+                num_coocc += coocc
+                if coocc > 0:
+                    sents.add(sid)
+        return sents
+
+
+    def get_coocc(self,
+                  hids: List[str],
+                  tids: List[str],
+                  sid2sent: Dict[int, List],
+                  dist_thres: int,
+                  max_num_sent: int = None):
+        context: Dict[Union[int, str], int] = defaultdict(lambda: 0)
+        for hid, tid in zip(hids, tids):
+            if hid not in self.entity2sid or tid not in self.entity2sid:
+                continue
+            hid_sids = set(self.entity2sid[hid].keys())
+            tid_sids = set(self.entity2sid[tid].keys())
+            both_sids = hid_sids & tid_sids
+            for sid in both_sids:
+                if sid not in sid2sent:
+                    continue
+
+                hid_pos_li = list(self.entity2sid[hid][sid])
+                tid_pos_li = list(self.entity2sid[tid][sid])
+
+                hid_pos_mid_li = np.array([(s + e) / 2 for s, e in hid_pos_li])
+                tid_pos_mid_li = np.array([(s + e) / 2 for s, e in tid_pos_li])
+                dist = np.abs(hid_pos_mid_li.reshape(-1, 1) - tid_pos_mid_li.reshape(1, -1)).reshape(-1)
+
+                for pos in np.argsort(dist):
+                    if dist[pos] >= dist_thres:
+                        break
+                    hid_pos = hid_pos_li[pos // len(tid_pos_li)]
+                    tid_pos = tid_pos_li[pos % len(tid_pos_li)]
+                    start = min(hid_pos[-1], tid_pos[-1])
+                    end = max(hid_pos[0], tid_pos[0])
+                    for w in sid2sent[sid][start:end]:
+                        context[w] += 1
+        return context
 
 
 def entity_idname_conversion(entityid2name: Dict[str, List[str]]):

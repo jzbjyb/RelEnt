@@ -7,6 +7,29 @@ from tqdm import tqdm
 import subprocess, re, os, random, functools, pickle
 import numpy as np
 from operator import itemgetter
+import spacy
+
+
+def get_checkword():
+    nlp = spacy.load('en_core_web_sm')
+    stopwords = nlp.Defaults.stop_words
+    word_pattern = re.compile('^[A-Za-z0-9]+$')
+    def check_words(word):
+        word = word.lower()
+        if word in stopwords:
+            return None
+        if not word_pattern.match(word):
+            return None
+        return word
+    def filter_bow(words: Dict[str, int]):
+        new_words: Dict[str, int] = {}
+        for w, c in words.items():
+            w = check_words(w)
+            if w is not None:
+                new_words[w] = c
+        return new_words
+    return filter_bow
+filter_bow = get_checkword()
 
 
 def hiro_subgraph_to_tree_dict(root: str,

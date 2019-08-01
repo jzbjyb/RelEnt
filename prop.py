@@ -15,7 +15,7 @@ from operator import itemgetter
 from sklearn.metrics.pairwise import cosine_similarity
 from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, \
     hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file, PropertyOccurrence, read_subgraph_file, \
-    read_prop_occ_file_from_dir, property_split
+    read_prop_occ_file_from_dir, property_split, get_pid2plabel, filter_bow
 from wikiutil.util import read_emb_ids, load_tsv_as_dict, load_tsv_as_list, read_embeddings_from_text_file
 from wikiutil.wikidata_query_service import get_property_occurrence
 from wikiutil.textual_relation import WikipediaDataset, SlingDataset
@@ -893,6 +893,126 @@ def ner_on_wikipedia(args, max_num_occ=None, max_num_sent=None):
             fout.write('\n')
 
 
+def get_sling_tokens(args):
+    sling_record_dir = args.inp
+    sling_dataset = SlingDataset(record_dir=sling_record_dir)
+    sling_dataset.extract_wikipedia_text(dump_dir=args.out)
+
+
+def filter_sling_tokens(args):
+    raw_sent_file = os.path.join(args.inp, 'wp_tokens.txt')
+    sent_ids_file = os.path.join(args.inp, 'sent_ids.npz')
+    out_file = os.path.join(args.inp, 'wp_tokens_filter.txt')
+
+    sent_ids = np.load(sent_ids_file)
+    sent_ids = set(sent_ids)
+    print('#sent id {}'.format(len(sent_ids)))
+
+    with open(raw_sent_file, 'r') as fin, open(out_file, 'w') as fout:
+        for l in tqdm(fin):
+            sid, tokens = l.rstrip('\n').split('\t', 1)
+            if int(sid) not in sent_ids:
+                continue
+            fout.write(l)
+
+
+def property_level_bow_sling_on_alldocs(args, dist_thres, max_num_sent=None):
+    prop_occ_dir, data_dir, subprop_file, sling_doc_file, sling_token_file, vocab_file = args.inp.split(':')
+
+    # collect all pids
+    all_pids = set()
+    all_pids |= set(load_tsv_as_dict(os.path.join(data_dir, 'train.prop')).keys())
+    all_pids |= set(load_tsv_as_dict(os.path.join(data_dir, 'dev.prop')).keys())
+    all_pids |= set(load_tsv_as_dict(os.path.join(data_dir, 'test.prop')).keys())
+    print('totally {} pids'.format(len(all_pids)))
+
+    subprops = read_subprop_file(subprop_file)
+    pid2plabel = get_pid2plabel(subprops)
+
+    # load property occurrences
+    poccs = PropertyOccurrence.build(sorted(all_pids), prop_occ_dir)
+    print('totally {} pids with occs'.format(len(poccs.pid2occs)))
+
+    # build <hid, tid> to pid mapping:
+    ht2pid: Dict[Tuple[str, str], str] = {}
+    for pid, occs in tqdm(poccs.pid2occs.items()):
+        for hid, tid in occs:
+            ht2pid[(hid, tid)] = pid
+
+    start_time = time.time()
+    # build context position
+    print('build context position')
+    sid2pos: Dict[int, Dict[str, set]] = defaultdict(lambda: defaultdict(set))
+    wdid2cout: Dict[str, int] = defaultdict(lambda: 0)
+    with open(sling_doc_file, 'r') as fin:
+        for i, l in tqdm(enumerate(fin)):
+            doc = l.strip().split('\t')
+            sid = int(doc[0])
+            mentions = []
+            for m in doc[1:]:
+                start, end, wdid = m.split(' ')
+                mentions.append((int(start), int(end), wdid))
+            for i in range(len(mentions)):
+                if max_num_sent and wdid2cout[mentions[i][2]] >= max_num_sent:
+                    continue
+                wdid2cout[mentions[i][2]] += 1
+                for j in range(i + 1, min(i + 1 + 5, len(mentions))):  # see the successive 5 mentions
+                    if max_num_sent and wdid2cout[mentions[j][2]] >= max_num_sent:
+                        continue
+                    if mentions[j][0] - mentions[i][1] > dist_thres:
+                        break
+                    for h, t in [(i, j), (j, i)]:
+                        hstart, hend, hid = mentions[h]
+                        tstart, tend, tid = mentions[t]
+                        if (hid, tid) in ht2pid:  # TODO: hid and tid could be the same
+                            start = min(hend, tend)
+                            end = max(hstart, tstart)
+                            pid = ht2pid[(hid, tid)]
+                            if end - start > 0 and end - start <= dist_thres:
+                                sid2pos[sid][pid].add((start, end))
+    print('totally {} sent'.format(len(sid2pos)))
+
+    # load vocab
+    wid2token = dict((v, k) for k, v in load_tsv_as_dict(vocab_file, valuefunc=int).items())
+
+    # build context
+    print('build context')
+    pid2context: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(lambda: 0))
+    with open(sling_token_file, 'r') as fin:
+        for l in tqdm(fin):
+            sid, tokens = l.rstrip('\n').split('\t')
+            sid = int(sid)
+            if sid not in sid2pos:
+                continue
+            tokens = list(map(int, tokens.split(' ')))
+            for pid, pos in sid2pos[sid].items():
+                for start, end in pos:
+                    for w in tokens[start:end]:
+                        pid2context[pid][wid2token[w]] += 1
+
+    # filter
+    for pid in pid2context:
+        context = pid2context[pid]
+        context = filter_bow(context)
+        pid2context[pid] = context
+
+    print('time_cost: {}'.format(time.time() - start_time))
+
+    # remove low-frequence words
+    pid2context = dict((pid, dict((w, c) for w, c in wd.items() if c >= 1)) for pid, wd in pid2context.items())
+    pid2context = dict((pid, wd) for pid, wd in pid2context.items() if len(wd) > 0)
+
+    # output
+    print('{} out of {} properties have context'.format(len(set(pid2context)), len(set(poccs.pid2occs))))
+    print('have: {}'.format(list(pid2context.keys())[:10]))
+    print('not have: {}'.format(list(all_pids - set(pid2context.keys()))[:10]))
+    for pid, wd in pid2context.items():
+        print(pid2plabel[pid], sorted(wd.items(), key=lambda x: -x[1])[:5], len(wd))
+
+    with open(os.path.join(args.out), 'wb') as fout:
+        pickle.dump(pid2context, fout)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
@@ -905,7 +1025,9 @@ if __name__ == '__main__':
                                  'get_useless_props', 'get_partial_order',
                                  'split_leaf_properties', 'replace_by_hard_split',
                                  'link_entity_to_wikipedia', 'wikidata2freebase',
-                                 'ner_on_wikipedia', 'link_entity_to_wikipedia_by_sling'], required=True)
+                                 'ner_on_wikipedia', 'link_entity_to_wikipedia_by_sling',
+                                 'get_sling_tokens', 'filter_sling_tokens',
+                                 'property_level_bow_sling_on_alldocs'], required=True)
     parser.add_argument('--inp', type=str, required=None)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -988,3 +1110,9 @@ if __name__ == '__main__':
         wikidata2freebase(args)
     elif args.task == 'ner_on_wikipedia':
         ner_on_wikipedia(args, max_num_occ=100, max_num_sent=10)
+    elif args.task == 'get_sling_tokens':
+        get_sling_tokens(args)
+    elif args.task == 'filter_sling_tokens':
+        filter_sling_tokens(args)
+    elif args.task == 'property_level_bow_sling_on_alldocs':
+        property_level_bow_sling_on_alldocs(args, dist_thres=10, max_num_sent=None)

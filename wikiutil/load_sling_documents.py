@@ -15,7 +15,7 @@ commons.freeze()
 
 
 class MyDocument(object):
-    def __init__(self, frame=None, store=None, schema=None, load_tokens=True):
+    def __init__(self, frame=None, store=None, schema=None, load_tokens=True, load_mentions=True):
         # Create store, frame, and schema if missing.
         if frame != None:
             store = frame.store()
@@ -44,10 +44,10 @@ class MyDocument(object):
                     token = self.get_word(t, schema, self._text)
                     self.tokens.append(token)
 
-        # Get mentions.
-        for m in frame(schema.document_mention):
-            mention = Mention(schema, m)
-            self.mentions.append(mention)
+        if load_mentions:  # Get mentions.
+            for m in frame(schema.document_mention):
+                mention = Mention(schema, m)
+                self.mentions.append(mention)
 
 
     def get_word(self, frame, schema, _text):
@@ -72,7 +72,9 @@ def get_metadata(frame: sling.Frame) -> Tuple[int, str, str]:
     return pageid, title, item
 
 
-def load(record: str, load_tokens: bool = True) -> Iterable[Tuple[sling.nlp.document.Document, Tuple[int, str, str]]]:
+def load(record: str,
+         load_tokens: bool = True,
+         load_mentions: bool = True) -> Iterable[Tuple[sling.nlp.document.Document, Tuple[int, str, str]]]:
     """load documents from a .rec file.
     Warning: this may take good amount of RAM space (each *.rec file is 5.3GB).
     """
@@ -82,7 +84,7 @@ def load(record: str, load_tokens: bool = True) -> Iterable[Tuple[sling.nlp.docu
         doc_frame = store.parse(rec)
         # instantiate a document
         #parsed_doc = sling.Document(doc_frame, store, DOCSCHEMA)
-        parsed_doc = MyDocument(doc_frame, store, DOCSCHEMA, load_tokens=load_tokens)
+        parsed_doc = MyDocument(doc_frame, store, DOCSCHEMA, load_tokens=load_tokens, load_mentions=load_mentions)
         metadata = get_metadata(doc_frame)
         yield parsed_doc, metadata
 

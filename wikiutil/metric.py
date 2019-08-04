@@ -218,11 +218,14 @@ def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]], method='macro'
     corr, total = 0, 0
     ranks: Dict[str, List] = {}
     label2ind = dict((v, k) for k, v in ind2label.items())
+    pred_labels, real_labels = [], []
     for pid, logits, label in predictions:
         if pid in label2ind:
             logits[label2ind[pid]] = -np.inf
         ind = np.argsort(-logits)
         ranks[pid] = [(ind2label[i], logits[i]) for i in ind]
+        pred_labels.append(ind[0])
+        real_labels.append(label)
         c = int(ind[0] == label)  # TODO: relation with multiple parents
         pid2acc[pid].append(c)
         total += 1
@@ -234,7 +237,7 @@ def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]], method='macro'
         #print(np.mean([v[np.random.choice(len(v), 1)[0]] for k, v in pid2acc.items()]), len(acc_per_prop))
     elif method == 'micro':
         acc = corr / total
-    return acc, ranks
+    return acc, ranks, pred_labels, real_labels
 
 
 def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='macro', agg='product', **kwargs):

@@ -143,13 +143,19 @@ def read_subprop_file(filepath) -> List[Tuple[Tuple[str, str], List[Tuple]]]:
 
 def read_nway_file(filepath,
                    filter_prop: set = None,
-                   keep_n_per_prop: int = None) -> List[Tuple[Tuple[str, Tuple], int]]:
+                   keep_n_per_prop: int = None,
+                   only_one_per_label: bool = False) -> List[Tuple[Tuple[str, Tuple], int]]:
     result = []
     prop2count = defaultdict(lambda: 0)
+    prev_label = None
     with open(filepath, 'r') as fin:
         for l in fin:
             label, poccs = l.strip().split('\t')
             label = int(label)
+            if only_one_per_label and prev_label and prev_label == label:
+                prev_label = label
+                continue
+            prev_label = label
             poccs = poccs.split(' ')
             assert len(poccs) % 2 == 1, 'nway file format error'
             occs = tuple(tuple(poccs[i * 2 + 1:i * 2 + 3]) for i in range((len(poccs) - 1) // 2))

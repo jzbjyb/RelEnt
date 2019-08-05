@@ -185,8 +185,8 @@ if __name__ == '__main__':
     else:
         label2ind = DefaultOrderedDict(lambda: len(label2ind))  # collect labels
 
-    def get_all_occs(pid):
-        for occs in poccs.get_all_occs(pid, args.num_sample):
+    def get_all_occs(pid, num_sample=None):
+        for occs in poccs.get_all_occs(pid, num_sample or args.num_sample):
             yield format_occs(pid, occs)
 
     for prop_split_name in ['train_prop', 'dev_prop', 'test_prop']:
@@ -274,8 +274,14 @@ if __name__ == '__main__':
         # save parent property occurrences
         with open(os.path.join(args.out_dir, 'label2occs.nway'), 'w') as fout:
             for label, ind in label2ind.items():
-                for po in get_all_occs(label):
-                    fout.write('{}\t{}\n'.format(ind, po))
+                self_and_childs = [label] + [p for p in train_prop if (label, p) in is_parent]
+                fout.write('{}\t{}'.format(ind, label))
+                for i, p in enumerate(self_and_childs):
+                    po = list(poccs.get_all_occs(p, 1))[0]
+                    if len(po) > 0:
+                        fout.write(' ')
+                    fout.write('{}'.format(' '.join(map(lambda o: ' '.join(o), po))))
+                fout.write('\n')
 
     elif args.method in {'by_entail', 'by_entail-overlap'}:
         # save parent properties (optional)

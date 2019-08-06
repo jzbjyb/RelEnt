@@ -10,7 +10,7 @@ from itertools import combinations, product
 from tqdm import tqdm
 import numpy as np
 from wikiutil.property import read_subprop_file, get_all_subtree, \
-    get_is_sibling, read_subgraph_file, get_is_parent, PropertyOccurrence, get_is_ancestor
+    get_is_sibling, read_subgraph_file, get_is_parent, PropertyOccurrence, get_is_ancestor, get_pid2plabel
 from wikiutil.util import read_emb_ids, save_emb_ids, DefaultOrderedDict, load_tsv_as_list, load_tsv_as_dict
 
 
@@ -24,6 +24,7 @@ if __name__ == '__main__':
                         help='entity subgraph file.')
     parser.add_argument('--emb_file', type=str, required=True,
                         help='embedding file.')
+    parser.add_argument('--entityid2name_file', type=str, default=None, help='entityid2name pickle file.')
     parser.add_argument('--out_dir', type=str, required=True)
     parser.add_argument('--train_dev_test', type=str, default='0.8:0.1:0.1')
     parser.add_argument('--max_occ_per_prop', type=int, default=5,
@@ -51,7 +52,12 @@ if __name__ == '__main__':
     np.random.seed(2019)
 
     subprops = read_subprop_file(args.prop_file)
-    pid2plabel = dict(p[0] for p in subprops)
+    if args.entityid2name_file:
+        with open(args.entityid2name_file, 'rb') as fin:
+            entityid2name = pickle.load(fin)
+    else:
+        entityid2name = None
+    pid2plabel = get_pid2plabel(subprops, entityid2name=entityid2name)
     subtrees, isolate = get_all_subtree(subprops)
     subtree_pids = set()  # only consider properties in subtrees
     [subtree_pids.add(pid) for subtree in subtrees for pid in subtree.traverse()]
@@ -260,7 +266,7 @@ if __name__ == '__main__':
     if args.method in {'within_tree', 'by_entail', 'by_entail-n_way', 'by_entail-overlap'}:
         subtrees_remains = [st for st in subtrees if len(set(st.nodes) & set(final_prop_split.keys())) > 0]
         # concat label and split
-        final_prop_split = dict((p, pid2plabel[p] + ' ' + final_prop_split[p].upper()) for p in pid2plabel)
+        final_prop_split = dict((p, pid2plabel[p] + ' ' + final_prop_split[p].upper()) for p in pid2plabel.pid2plabel)
         # save subtrees for this split
         with open(os.path.join(args.out_dir, 'within_tree_split.txt'), 'w') as fout:
             for st in subtrees_remains:

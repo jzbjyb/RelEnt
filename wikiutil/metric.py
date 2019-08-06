@@ -212,7 +212,7 @@ class AnalogyEval():
         return getattr(self, reduction + '_' + metric)(predictions)
 
 
-def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]], method='macro', agg='product', ind2label=None):
+def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]], method='macro', agg='product', ind2label=None, topk=1):
     assert method in {'macro', 'micro'}
     pid2acc = defaultdict(lambda: [])
     corr, total = 0, 0
@@ -226,7 +226,11 @@ def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]], method='macro'
         ranks[pid] = [(ind2label[i], logits[i]) for i in ind]
         pred_labels.append(ind[0])
         real_labels.append(label)
-        c = int(ind[0] == label)  # TODO: relation with multiple parents
+        c = 0
+        for i in range(min(len(ind), topk)):
+            if ind[i] == label:  # TODO: relation with multiple parents
+                c = 1
+                break
         pid2acc[pid].append(c)
         total += 1
         corr += c

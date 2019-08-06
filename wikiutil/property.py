@@ -290,19 +290,27 @@ def get_is_parent(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]):
 
 
 class Pid2plabelWrapper:
-    def __init__(self, pid2plabel: Dict[str, str]):
+    def __init__(self, pid2plabel: Dict[str, str], entityid2name: Dict[str, List[str]] = None):
         self.pid2plabel = pid2plabel
+        self.entityid2name = entityid2name
 
     def __getitem__(self, item):
         pid = item.split('_', 1)
         if len(pid) == 1:
             return self.pid2plabel[pid[0]]
-        return self.pid2plabel[pid[0]] + '_' + pid[1]
+        if self.entityid2name:
+            pid_suf = '_'.join(self.entityid2name[eid][0] if eid in self.entityid2name else eid
+                               for eid in pid[1].split('_'))
+        else:
+            pid_suf = pid[1]
+        return self.pid2plabel[pid[0]] + '_' + pid_suf
 
 
-def get_pid2plabel(subprops: List):
+
+
+def get_pid2plabel(subprops: List, entityid2name: Dict[str, List[str]] = None):
     pid2plabel = dict(p[0] for p in subprops)
-    return Pid2plabelWrapper(pid2plabel)
+    return Pid2plabelWrapper(pid2plabel, entityid2name)
 
 
 def filter_prop_occ_by_subgraph_and_emb(prop: str,

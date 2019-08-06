@@ -14,6 +14,7 @@ prop_dir=data/property_occurrence_prop580k_split
 prop_file=data/property_occurrence_prop580k_split/subprops_hard
 method=by_entail-n_way
 emb_file=../pytorch_big_graph/emb/transe.txt
+entityid2name_file=data/split_merge_triples/property_occurrence_prop580k_split_entityid2name.pkl
 
 mkdir -p ${data_dir}
 
@@ -22,6 +23,7 @@ python prep_data.py \
     --prop_dir ${prop_dir} \
     --subgraph_file ${subgraph_file} \
     --emb_file ${emb_file} \
+    --entityid2name_file ${entityid2name_file} \
     --out_dir ${data_dir} \
     --method ${method} \
     --train_dev_test 0.6:0.2:0.2 \

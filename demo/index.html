@@ -6,6 +6,9 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.2.1/themes/default/style.min.css"/>
   <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
   <style>
+    html {
+      font-size: 14px;
+    }
     .wrong {
       color: orangered;
     }
@@ -15,47 +18,45 @@
     .relation {
       cursor: pointer;
     }
+    .predicted {
+      font-style: italic;
+    }
+    .my-clo {
+      max-height: 1000px;
+      overflow: scroll;
+    }
   </style>
 </head>
 <body ng-app="app" ng-controller="DemoCtrl">
-  <!--
-  <div id="rel_hier">
-    <ul>
-      <li>Root node 1
-        <ul>
-          <li id="child_node_1">Child node 1</li>
-          <li>Child node 2</li>
-        </ul>
-      </li>
-      <li>Root node 2</li>
-    </ul>
-    <ul>
-      <li ng-repeat="category in categories" ng-include="'RelHier'"></li>
-    </ul>
-  </div>
-  -->
-
   <div class="container-fluid">
     <div class="row">
-      <div class="col-sm">
+      <div class="col-sm my-clo">
+        <h3>Train Relation Hierarchy</h3>
         <div js-tree="treeConfig" ng-model="treeData" should-apply="ignoreModelChanges()" tree="treeInstance"  tree-events-obj="treeEventsObj"></div>
       </div>
-      <div class="col-sm">
-        <ul class="list-group">
-          <li class="list-group-item" ng-repeat="rel in testTreeData">
+      <div class="col-sm my-clo">
+        <h3>Test Relations</h3>
+        <span class="correct">Green</span> means correct. <span class="wrong">Red</span> means wrong. <span class="predicted">Italic</span> means predicted parent.
+        <ol>
+          <li ng-repeat="rel in testTreeData">
             <div>
               <span ng-click="loadHeadTail(rel.id)" class="relation" ng-class="{wrong: rel.parent != rel.pred_parent, correct: rel.parent == rel.pred_parent}">{{ rel.text }}</span>
             </div>
-            <button type="button" class="btn btn-outline-primary btn-sm" ng-click="locateParent(rel.parent)">real parent</button>
-            <button type="button" class="btn btn-outline-primary btn-sm" ng-click="locateParent(rel.pred_parent)">predicted parent</button>
+            <div>
+              <span class="relation" ng-click="locateParent(rel.parent)">- {{ rel.parent_text }}</span>
+            </div>
+            <div ng-if="rel.parent != rel.pred_parent">
+              <span class="relation predicted" ng-click="locateParent(rel.pred_parent)">- {{ rel.pred_parent_text }}</span>
+            </div>
           </li>
-        </ul>
+        </ol>
       </div>
-      <div class="col-sm">
+      <div class="col-sm my-clo">
+        <h3>Head and Tail Entities</h3>
         <div id="head_tail">
           <ul>
             <li ng-repeat="ht in headTail">
-              {{ ht }}
+              {{ ht[0] }} -> {{ ht[1] }}
             </li>
           </ul>
         </div>
@@ -82,77 +83,9 @@
     </ul>
   </script>
   <script>
-    function readJSON(path) {
-      var xhr = new XMLHttpRequest();
-      xhr.open('GET', path, true);
-      xhr.responseType = 'blob';
-      xhr.onload = function(e) {
-        if (this.status == 200) {
-          var file = new File([this.response], 'temp');
-          var fileReader = new FileReader();
-          fileReader.addEventListener('load', function(){
-            //do stuff with fileReader.result
-          });
-          fileReader.readAsText(file);
-        }
-      };
-      xhr.send();
-    }
-
-    // original jsTree
-    $(function () {
-      $('#rel_hier').jstree();
-      $('#rel_hier').on("changed.jstree", function (e, data) {
-        console.log(data.selected);
-      });
-    });
-
     // angular controller
     var app = angular.module('app', ['ngJsTree']);
     app.controller('DemoCtrl', function ($scope) {
-      $scope.categories = [
-        {
-          title: 'Computers',
-          categories: [
-            {
-              title: 'Laptops',
-              categories: [
-                {
-                  title: 'Ultrabooks'
-                },
-                {
-                  title: 'Macbooks'
-                }
-              ]
-            },
-
-            {
-              title: 'Desktops'
-            },
-
-            {
-              title: 'Tablets',
-              categories: [
-                {
-                  title: 'Apple'
-                },
-                {
-                  title: 'Android'
-                }
-              ]
-            }
-          ]
-        },
-
-        {
-          title: 'Printers'
-        }
-      ];
-
-      $('#rel_hier').on("changed.jstree", function (e, data) {
-        console.log(data);
-      });
-
       $scope.treeConfig = {
         core : {
           multiple: false,
@@ -180,10 +113,10 @@
 
       // sample data
       $scope.treeData = [
-        { id : '1', parent : '#', text : 'Simple root node', state: {opened: false} },
-        { id : '2', parent : '#', text : 'Root node 2', state: {opened: false, selected: true} },
-        { id : '3', parent : '2', text : 'Child 1', state: {opened: false} },
-        { id : '4', parent : '2', text : 'Child 2' , state: {opened: false}}
+        {id: '1', parent: '#', text: 'Simple root node', state: {opened: false}},
+        {id: '2', parent: '#', text: 'Root node 2', state: {opened: false, selected: true}},
+        {id: '3', parent: '2', text: 'Child 1', state: {opened: false}},
+        {id: '4', parent: '2', text: 'Child 2', state: {opened: false}}
       ];
       $scope.treeData = [];
       angular.copy(treeData, $scope.treeData);
@@ -195,13 +128,13 @@
       //});
 
       // sample data
-      $scope.healTailDict = {
+      $scope.headTailDict = {
         "1": [['1', '2']],
         "2": [['2', '3'], ['4', '5']]
       };
-      $scope.healTailDict = healTailDict;
+      $scope.headTailDict = headTailDict;
 
-      $scope.locateParent = function(real_parent, pred_parent) {
+      $scope.locateParent = function(real_parent) {
         $scope.treeData = [];
         angular.copy(treeData, $scope.treeData);
         var item = _.findWhere($scope.treeData, {'id': real_parent});
@@ -210,7 +143,7 @@
       };
 
       $scope.loadHeadTail = function(id) {
-        $scope.headTail = $scope.healTailDict[id];
+        $scope.headTail = $scope.headTailDict[id];
       };
 
       $scope.treeEventsObj = {

@@ -212,16 +212,23 @@ class AnalogyEval():
         return getattr(self, reduction + '_' + metric)(predictions)
 
 
-def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]], method='macro', agg='product', ind2label=None, topk=1):
+def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]],
+                  method='macro',
+                  agg='product',
+                  ind2label=None,
+                  topk=1,
+                  use_average=False):
     assert method in {'macro', 'micro'}
     pid2acc = defaultdict(lambda: [])
     corr, total = 0, 0
     ranks: Dict[str, List] = {}
     label2ind = dict((v, k) for k, v in ind2label.items())
     pred_labels, real_labels = [], []
+    label2pred: Dict[int, np.ndarray] = defaultdict(lambda: np.zeros(230))
     for pid, logits, label in predictions:
         if pid in label2ind:
             logits[label2ind[pid]] = -np.inf
+        label2pred[label] += np.exp(logits) / np.sum(np.exp(logits))
         ind = np.argsort(-logits)
         ranks[pid] = [(ind2label[i], logits[i]) for i in ind]
         pred_labels.append(ind[0])
@@ -234,6 +241,17 @@ def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]], method='macro'
         pid2acc[pid].append(c)
         total += 1
         corr += c
+
+    if use_average:
+        method = 'macro'
+        total, corr = 0, 0
+        ranks: Dict[str, List] = {}
+        for pid, logits, label in predictions:
+            ind = np.argsort(-label2pred[label])
+            ranks[pid] = [(ind2label[i], label2pred[label][i]) for i in ind]
+            total += 1
+            corr += int(ind[0] == label)
+
     if method == 'macro':
         acc_per_prop = sorted([(k, np.mean(v)) for k, v in pid2acc.items()], key=lambda x: -x[1])
         acc = np.mean(list(map(itemgetter(1), acc_per_prop)))

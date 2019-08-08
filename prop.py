@@ -31,7 +31,7 @@ def subprop(args):
     num_parent = 0
     num_pairs = 0
     with open(args.out, 'w') as fout:
-        for pid, plabel in all_props:
+        for pid, plabel in tqdm(all_props):
             subs = get_sub_properties(pid)
             if len(subs) > 0:
                 num_parent += 1
@@ -549,6 +549,24 @@ def get_useless_props(args):
     return miss, useful, useless
 
 
+def get_useless_props_from_json_file(args):
+    json_file = args.inp
+    with open(json_file, 'r') as fin:
+        props = json.load(fin)
+    useful_props: List[Tuple[str, str]] = []
+    for prop in props:
+        pid = prop['id']
+        label = prop['label']
+        dt = prop['datatype']
+        if dt != 'wikibase-item':
+            continue
+        useful_props.append((pid, label))
+    print('{} useful properties'.format(len(useful_props)))
+    with open(args.out, 'w') as fout:
+        for pid, label in useful_props:
+            fout.write('{}\t{}\n'.format(pid, label))
+
+
 def read_graph_link(filename):
     parent2chids = defaultdict(lambda: [])
     child2parents = defaultdict(lambda: [])
@@ -916,7 +934,7 @@ def filter_sling_tokens(args):
             fout.write(l)
 
 
-def property_level_bow_sling_on_alldocs(args, dist_thres, max_num_sent=None):
+def property_level_bow_sling_on_alldocs(args, dist_thres, max_num_sent=None, split_token=False, max_token=None):
     prop_occ_dir, data_dir, subprop_file, sling_doc_file, sling_token_file, vocab_file = args.inp.split(':')
 
     # collect all pids
@@ -961,7 +979,7 @@ def property_level_bow_sling_on_alldocs(args, dist_thres, max_num_sent=None):
                         continue
                     if mentions[j][0] - mentions[i][1] > dist_thres:
                         break
-                    for h, t in [(i, j), (j, i)]:
+                    for h, t, direction in [(i, j, 1), (j, i, -1)]:
                         hstart, hend, hid = mentions[h]
                         tstart, tend, tid = mentions[t]
                         if (hid, tid) in ht2pid:  # TODO: hid and tid could be the same
@@ -969,7 +987,7 @@ def property_level_bow_sling_on_alldocs(args, dist_thres, max_num_sent=None):
                             end = max(hstart, tstart)
                             pid = ht2pid[(hid, tid)]
                             if end - start > 0 and end - start <= dist_thres:
-                                sid2pos[sid][pid].add((start, end))
+                                sid2pos[sid][pid].add((start, end, direction))
     print('totally {} sent'.format(len(sid2pos)))
 
     # load vocab
@@ -977,7 +995,7 @@ def property_level_bow_sling_on_alldocs(args, dist_thres, max_num_sent=None):
 
     # build context
     print('build context')
-    pid2context: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(lambda: 0))
+    pid2context: Dict[str, Dict[Tuple[str, int], int]] = defaultdict(lambda: defaultdict(lambda: 0))
     with open(sling_token_file, 'r') as fin:
         for l in tqdm(fin):
             sid, tokens = l.rstrip('\n').split('\t')
@@ -986,15 +1004,22 @@ def property_level_bow_sling_on_alldocs(args, dist_thres, max_num_sent=None):
                 continue
             tokens = list(map(int, tokens.split(' ')))
             for pid, pos in sid2pos[sid].items():
-                for start, end in pos:
-                    for w in tokens[start:end]:
-                        pid2context[pid][wid2token[w]] += 1
+                if max_token and len(pid2context[pid]) > max_token:
+                    continue
+                for start, end, direction in pos:
+                    if split_token:
+                        for w in tokens[start:end]:
+                            pid2context[pid][wid2token[w]] += 1
+                    else:
+                        snippet = ' '.join(map(lambda w: wid2token[w], tokens[start:end]))
+                        pid2context[pid][(snippet, direction)] += 1
 
     # filter
-    for pid in pid2context:
-        context = pid2context[pid]
-        context = filter_bow(context)
-        pid2context[pid] = context
+    if split_token:
+        for pid in pid2context:
+            context = pid2context[pid]
+            context = filter_bow(context)
+            pid2context[pid] = context
 
     print('time_cost: {}'.format(time.time() - start_time))
 
@@ -1022,7 +1047,8 @@ if __name__ == '__main__':
                                  'wikidata_populate', 'filter_ontology', 'build_ontology',
                                  'filter_triples', 'downsample_by_property',
                                  'downsample_by_property_and_popularity', 'merge_poccs',
-                                 'get_useless_props', 'get_partial_order',
+                                 'get_useless_props', 'get_useless_props_from_json_file',
+                                 'get_partial_order',
                                  'split_leaf_properties', 'replace_by_hard_split',
                                  'link_entity_to_wikipedia', 'wikidata2freebase',
                                  'ner_on_wikipedia', 'link_entity_to_wikipedia_by_sling',
@@ -1093,6 +1119,8 @@ if __name__ == '__main__':
     elif args.task == 'get_useless_props':
         # how many properties are useful
         get_useless_props(args)
+    elif args.task == 'get_useless_props_from_json_file':
+        get_useless_props_from_json_file(args)
     elif args.task == 'get_partial_order':
         # get the partial order from ontology
         get_partial_order(args)
@@ -1115,4 +1143,12 @@ if __name__ == '__main__':
     elif args.task == 'filter_sling_tokens':
         filter_sling_tokens(args)
     elif args.task == 'property_level_bow_sling_on_alldocs':
-        property_level_bow_sling_on_alldocs(args, dist_thres=10, max_num_sent=None)
+        '''
+        python prop.py --task property_level_bow_sling_on_alldocs 
+        --inp data/property_occurrence_prop580k_split/:
+        data/analogy_dataset/split_middle_by_entail_nway_subgraph10_sample5_parent_occ/:
+        data/property_occurrence_prop580k_split/subprops_hard:data/textual/wikipedia_sling/sent2mention.tsv:
+        data/textual/wikipedia_sling/tokens/wp_tokens.txt:data/textual/wikipedia_sling/tokens/vocab.tsv 
+        --out data/textual/wikipedia_sling/pid2context.pkl
+        '''
+        property_level_bow_sling_on_alldocs(args, dist_thres=10, max_num_sent=None, split_token=False, max_token=10000)

@@ -8,6 +8,7 @@
     - A tree structure constructed by "subclass of" (P279) or "subproperty of" (P1647).
 - https://github.com/lucaswerkmeister/wikidata-ontology-exploreradd 
 - https://www.wikidata.org/wiki/Wikidata:Database_reports/List_of_properties/all (property types)
+- https://tools.wmflabs.org/hay/propbrowse/props properties in a single json file
 
 ## Build sub-graph
 

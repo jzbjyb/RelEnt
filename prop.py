@@ -753,6 +753,9 @@ def make_hard_split(subprops_split: List,
         elif method.startswith('top_'):
             top_m = min(int(method.split('_', 1)[1]), len(sim))
             outlier = this_group[np.argsort(sim)[top_m]]
+        elif method == 'random':
+            outlier = np.random.choice(len(sim), 1)[0]
+            outlier = this_group[outlier]
         else:
             raise NotImplemented
         p2hard[parent] = outlier
@@ -850,6 +853,25 @@ def link_entity_to_wikipedia_by_sling(args, max_num_sent):
     sling_dataset = SlingDataset(record_dir=sling_record_dir)
     sling_dataset.build_entity2sent(wikidata_ids=wikidata_ids, max_num_sent=max_num_sent,
                                     dump_dir=args.out, load_tokens=False)
+
+
+def wikidata_contained_by_sling(args):
+    triple_file, mention_popu_file = args.inp.split(':')
+    # triple_file = 'data_new/split_merge_triples/property_occurrence_prop435k_split.tsv'
+    # mention_popu_file = 'data/sling/mention_popu.tsv'
+
+    wdid2count = load_tsv_as_dict(mention_popu_file, valuefunc=int)
+
+    print('load wikidata ...')
+    wikidata_ids = set()
+    with open(triple_file, 'r') as fin:
+        for l in fin:
+            h, r, t = l.strip().split('\t')
+            wikidata_ids.add(h)
+            wikidata_ids.add(t)
+
+    contained = [wdid for wdid in wikidata_ids if wdid in wdid2count]
+    print('{} out of {} contained by sling'.format(len(contained), len(wikidata_ids)))
 
 
 def get_wikidata_item_popularity_by_sling(args):
@@ -1086,6 +1108,7 @@ if __name__ == '__main__':
                                  'link_entity_to_wikipedia', 'wikidata2freebase',
                                  'ner_on_wikipedia', 'link_entity_to_wikipedia_by_sling',
                                  'get_wikidata_item_popularity_by_sling',
+                                 'wikidata_contained_by_sling',
                                  'get_sling_tokens', 'filter_sling_tokens',
                                  'property_level_bow_sling_on_alldocs'], required=True)
     parser.add_argument('--inp', type=str, required=None)
@@ -1170,6 +1193,8 @@ if __name__ == '__main__':
         link_entity_to_wikipedia_by_sling(args, max_num_sent=10000)
     elif args.task == 'get_wikidata_item_popularity_by_sling':
         get_wikidata_item_popularity_by_sling(args)
+    elif args.task == 'wikidata_contained_by_sling':
+        wikidata_contained_by_sling(args)
     elif args.task == 'wikidata2freebase':
         wikidata2freebase(args)
     elif args.task == 'ner_on_wikipedia':

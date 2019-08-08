@@ -217,14 +217,15 @@ def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]],
                   agg='product',
                   ind2label=None,
                   topk=1,
-                  use_average=False):
+                  use_average=False,
+                  num_classes=0):
     assert method in {'macro', 'micro'}
     pid2acc = defaultdict(lambda: [])
     corr, total = 0, 0
     ranks: Dict[str, List] = {}
     label2ind = dict((v, k) for k, v in ind2label.items())
     pred_labels, real_labels = [], []
-    label2pred: Dict[int, np.ndarray] = defaultdict(lambda: np.zeros(230))
+    label2pred: Dict[int, np.ndarray] = defaultdict(lambda: np.zeros(num_classes))
     for pid, logits, label in predictions:
         if pid in label2ind:
             logits[label2ind[pid]] = -np.inf

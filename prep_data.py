@@ -43,6 +43,8 @@ if __name__ == '__main__':
                         help='number of pairs to sample/sample for each property pair/property')
     parser.add_argument('--load_split', type=str,
                         help='directly to load train/dev/test and parent (if any) properties from out_dir')
+    parser.add_argument('--load_poccs', type=str,
+                        help='directly to load poccs (if any) from out_dir')
     parser.add_argument('--allow_empty_split', action='store_true',
                         help='whether empty split is allowed. used in within_tree and by_entail and by_entail-n_way')
     parser.add_argument('--filter_test', action='store_true', help='whether to remove test pid before population')
@@ -77,9 +79,9 @@ if __name__ == '__main__':
     subgraph_dict = read_subgraph_file(args.subgraph_file)
     #save_emb_ids(args.emb_file, args.emb_file + '.id')
     emb_set = read_emb_ids(args.emb_file)
-    if args.load_split and os.path.exists(os.path.join(args.load_split, 'poccs.pickle')):
+    if args.load_poccs and os.path.exists(os.path.join(args.load_poccs, 'poccs.pickle')):
         print('load preprocessed property occs')
-        with open(os.path.join(args.load_split, 'poccs.pickle'), 'rb') as fin:
+        with open(os.path.join(args.load_poccs, 'poccs.pickle'), 'rb') as fin:
             poccs = PropertyOccurrence(pickle.load(fin), num_occ_per_subgraph=args.num_occ_per_subgraph)
     else:
         if args.property_population:
@@ -87,9 +89,9 @@ if __name__ == '__main__':
             if args.filter_test:
                 # filter both dev and test properites
                 filter_pids = set(map(itemgetter(0), 
-                    load_tsv_as_list(os.path.join(args.out_dir, 'test.prop'))))
+                    load_tsv_as_list(os.path.join(args.load_split, 'test.prop'))))
                 filter_pids |= set(map(itemgetter(0),
-                    load_tsv_as_list(os.path.join(args.out_dir, 'dev.prop'))))
+                    load_tsv_as_list(os.path.join(args.load_split, 'dev.prop'))))
             poccs = PropertyOccurrence.build(sorted(all_propids), args.prop_dir,
                                              subgraph_dict=subgraph_dict,
                                              emb_set=emb_set,

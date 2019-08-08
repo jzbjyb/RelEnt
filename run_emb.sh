@@ -7,9 +7,9 @@ set -e
 
 for method in avg mixgau_fast
 do
-    for emb in ../pytorch_big_graph/emb/transe.txt ../pytorch_big_graph/emb/complex.txt ../pytorch_big_graph/emb/distmult.txt
+    for emb in ../pytorch_big_graph/emb_new/transe.txt ../pytorch_big_graph/emb_new/complex.txt ../pytorch_big_graph/emb_new/distmult.txt
     do
-        for data_dir in "data/analogy_dataset/split_middle_overlap/" "data/analogy_dataset/split_middle_overlap_popu/" "data/analogy_dataset/split_middle_overlap_popu_withtest/"
+        for data_dir in "data_new/analogy_dataset/split_middle_overlap/" "data_new/analogy_dataset/split_middle_overlap_popu/" "data_new/analogy_dataset/split_middle_overlap_popu_withtest/"
         do
             echo "======="
             echo ${method} ${emb} ${data_dir}
@@ -17,7 +17,7 @@ do
             python run_emb.py \
                 --dataset_dir ${data_dir} \
                 --split test.prop \
-                --subprop_file data/property_occurrence_prop580k_split/subprops_hard \
+                --subprop_file data_new/property_occurrence_prop435k_split/subprops_hard \
                 --emb_file ${emb} \
                 --method ${method} \
                 --num_workers 8 \

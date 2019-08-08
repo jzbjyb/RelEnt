@@ -584,6 +584,24 @@ class SlingDataset():
         print('#doc {}, #vocab {}'.format(num_docs, len(vocab)))
 
 
+    def build_entity_popularity(self, dump_dir):
+        wdid2count: Dict[str, int] = defaultdict(lambda: 0)
+        record_dir = Path(self.record_dir)
+        record_files = record_dir.glob('*.rec')
+        for rec_file in record_files:
+            rec_file = str(rec_file)
+            print('loading {}'.format(rec_file))
+            for i, (doc, (wpid, _, _)) in tqdm(enumerate(load(rec_file, load_tokens=False, load_mentions=True))):
+                for mention in get_mentions(doc):
+                    start, end, wdid = mention
+                    wdid2count[wdid] += 1
+        print('{} wikidata items'.format(len(wdid2count)))
+        wdid2count = sorted(wdid2count.items(), key=lambda x: -x[1])
+        with open(dump_dir, 'w') as fout:
+            for w, c in wdid2count:
+                fout.write('{}\t{}\n'.format(w, c))
+
+
     def build_entity2sent(self,
                           wikidata_ids: set,
                           max_num_sent: int = None,

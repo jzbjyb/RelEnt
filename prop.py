@@ -404,26 +404,36 @@ def dfs_collect(root, path: Dict[str, List], depth=1) -> set:
 
 def filter_triples(args):
     ''' note the all P31 "instance of" should also be kept '''
-    triple_file, entity_file = args.inp.split(':')
+    triple_file, entity_file, useful_props = args.inp.split(':')
     try:
         entities = set(load_tsv_as_dict(entity_file).keys())
     except:
         entities = set(load_tsv_as_list(entity_file, split=False))
     print('total number of frequent entities {}'.format(len(entities)))
+
+    useful_props = set(load_tsv_as_dict(useful_props).keys())
+
     count = 0
+    dup = set()
     with open(triple_file, 'r') as tri_fin, \
             open(args.out, 'w') as fout:
         for lc, line in tqdm(enumerate(tri_fin), ncols=80, desc='Preparing triples', total=270306417):
+            if line in dup:
+                continue
             subj, rel, obj = line.strip().split('\t')
+            if rel not in useful_props:
+                continue
             # TODO: maybe we need to add "subclass of" as well because some entities don't have P31, e.g., Q204944
             if rel == 'P31' and subj in entities:
                 count += 1
                 fout.write(line)
+                dup.add(line)
             else:
                 if subj not in entities or obj not in entities:
                     continue
                 count += 1
                 fout.write(line)
+                dup.add(line)
     print('total number of triples left {}'.format(count))
 
 
@@ -454,7 +464,8 @@ def downsample_by_property(args, ds_func=lambda x: int(min(x, np.sqrt(x) * 10)))
     print('from #{} to #{}'.format(ori_lines, ds_lines))
 
 
-def downsample_by_property_and_popularity(args, ds_func=lambda x: int(min(x, np.sqrt(x) * 10))):
+def downsample_by_property_and_popularity(args, ds_func=lambda x: int(min(x, np.sqrt(x) * 10)), avg='mean'):
+    assert avg in {'mean', 'f1'}
     prop_occur_dir, entity2count, useful_props = args.inp.split(':')
     ds_dir = args.out
     if os.path.exists(ds_dir):
@@ -487,7 +498,18 @@ def downsample_by_property_and_popularity(args, ds_func=lambda x: int(min(x, np.
                 ori_file, filter=True, contain_name=False, max_num=None)
 
             # rank by popularity
-            occs = sorted(occs, key=lambda o: -entity2count[o[0]] - entity2count[o[1]])
+            if avg == 'mean':
+                avg_count = lambda o: -(entity2count[o[0]] + entity2count[o[1]])
+            elif avg == 'f1':
+                def avg_count(o):
+                    if o[0] in entity2count and o[1] in entity2count:
+                        count = 1 / (1 / entity2count[o[0]] + 1 / entity2count[o[1]])
+                    else:
+                        count = 0
+                    return -count
+            else:
+                raise NotImplementedError
+            occs = sorted(occs, key=avg_count)
 
             # compute
             ori_lines += len(occs)
@@ -627,21 +649,26 @@ def get_partial_order(args):
 
 
 def split_leaf_properties(args):
-    pocc_dir, subgraph_dict, subprops, node2depth = args.inp.split(':')
+    pocc_dir, subgraph_dict, subprops, node2depth, useful_props = args.inp.split(':')
     split_pocc_dir = args.out
 
     subprops = read_subprop_file(subprops)
     pid2plabel = dict(p[0] for p in subprops)
     pid2plabel_ = lambda x: pid2plabel[x.split('_', 1)[0]]
-    subtrees, _ = get_all_subtree(subprops)
+    subtrees, isolate = get_all_subtree(subprops)
     subgraph_dict = read_subgraph_file(subgraph_dict)
     node2depth = load_tsv_as_dict(node2depth, valuefunc=int)
+    useful_props = set(load_tsv_as_dict(useful_props).keys())
 
     # get all the leaves
     leaves = set()
-    for subtree in subtrees:
+    all = set()
+    for subtree in subtrees + isolate:
         leaves.update(subtree.leaves)
-    print('totally {} leaves'.format(len(leaves)))
+        all.update(subtree.nodes)
+    all &= useful_props
+    leaves &= useful_props
+    print('totally {}, {} leaves'.format(len(all), len(leaves)))
 
     pid2splitcount = {}
     all_poccs = {}
@@ -823,6 +850,12 @@ def link_entity_to_wikipedia_by_sling(args, max_num_sent):
     sling_dataset = SlingDataset(record_dir=sling_record_dir)
     sling_dataset.build_entity2sent(wikidata_ids=wikidata_ids, max_num_sent=max_num_sent,
                                     dump_dir=args.out, load_tokens=False)
+
+
+def get_wikidata_item_popularity_by_sling(args):
+    sling_record_dir = args.inp
+    sling_dataset = SlingDataset(record_dir=sling_record_dir)
+    sling_dataset.build_entity_popularity(dump_dir=args.out)
 
 
 def wikidata2freebase(args):
@@ -1052,6 +1085,7 @@ if __name__ == '__main__':
                                  'split_leaf_properties', 'replace_by_hard_split',
                                  'link_entity_to_wikipedia', 'wikidata2freebase',
                                  'ner_on_wikipedia', 'link_entity_to_wikipedia_by_sling',
+                                 'get_wikidata_item_popularity_by_sling',
                                  'get_sling_tokens', 'filter_sling_tokens',
                                  'property_level_bow_sling_on_alldocs'], required=True)
     parser.add_argument('--inp', type=str, required=None)
@@ -1112,7 +1146,7 @@ if __name__ == '__main__':
     elif args.task == 'downsample_by_property_and_popularity':
         # down-sample wikidata through properties
         ds_func = lambda x: int(min(x, np.sqrt(min(x, 1e5)) * 10))
-        downsample_by_property_and_popularity(args, ds_func=ds_func)
+        downsample_by_property_and_popularity(args, ds_func=ds_func, avg='f1')
     elif args.task == 'merge_poccs':
         # merge all the property occurrence files
         merge_poccs(args)
@@ -1134,6 +1168,8 @@ if __name__ == '__main__':
         link_entity_to_wikipedia(args, max_num_sent=1000)
     elif args.task == 'link_entity_to_wikipedia_by_sling':
         link_entity_to_wikipedia_by_sling(args, max_num_sent=10000)
+    elif args.task == 'get_wikidata_item_popularity_by_sling':
+        get_wikidata_item_popularity_by_sling(args)
     elif args.task == 'wikidata2freebase':
         wikidata2freebase(args)
     elif args.task == 'ner_on_wikipedia':

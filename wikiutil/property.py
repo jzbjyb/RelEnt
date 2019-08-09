@@ -170,6 +170,18 @@ def read_nway_file(filepath,
     return result
 
 
+def read_tbow_file(filename):
+    result: List[List[Tuple[int, int]]] = []
+    with open(filename, 'r') as fin:
+        for l in fin:
+            l = l.strip()
+            if l == '':
+                result.append([])
+            else:
+                result.append(list(map(lambda x: tuple(map(int, x.split(' '))), l.split('\t'))))
+    return result
+
+
 def read_multi_pointiwse_file(filepath,
                               filter_prop: set = None,
                               keep_n_per_prop: int = None) \

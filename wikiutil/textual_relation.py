@@ -651,6 +651,35 @@ class SlingDataset():
             return sid2sent, entity2sid, vocab
 
 
+    def build_entity2sent_onepass(self,
+                                  wikidata_ids: set,
+                                  dump_dir: str = False):
+        num_sent = 0
+        entities = set()
+        with open(os.path.join(dump_dir, 'sent2mention.tsv'), 'w') as fout:
+            # iterate over all mentions
+            record_dir = Path(self.record_dir)
+            record_files = record_dir.glob('*.rec')
+            for rec_file in record_files:
+                rec_file = str(rec_file)
+                print('loading {}'.format(rec_file))
+                for i, (doc, (wpid, _, _)) in tqdm(enumerate(load(rec_file, load_tokens=False, load_mentions=True))):
+                    first = True
+                    for mention in get_mentions(doc):
+                        start, end, wdid = mention
+                        if wdid not in wikidata_ids:
+                            continue
+                        if first:
+                            fout.write('{}'.format(wpid))
+                            first = False
+                            num_sent += 1
+                        entities.add(wdid)
+                        fout.write('\t{} {} {}'.format(start, end, wdid))
+                    if not first:
+                        fout.write('\n')
+        print('{} sentences, {} entities found'.format(num_sent, len(entities)))
+
+
     def get_coocc_sentid(self,
                          hids: List[str],
                          tids: List[str],

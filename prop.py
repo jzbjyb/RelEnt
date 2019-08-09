@@ -851,8 +851,9 @@ def link_entity_to_wikipedia_by_sling(args, max_num_sent):
 
     print('build ...')
     sling_dataset = SlingDataset(record_dir=sling_record_dir)
-    sling_dataset.build_entity2sent(wikidata_ids=wikidata_ids, max_num_sent=max_num_sent,
-                                    dump_dir=args.out, load_tokens=False)
+    #sling_dataset.build_entity2sent(wikidata_ids=wikidata_ids, max_num_sent=max_num_sent,
+    #                                dump_dir=args.out, load_tokens=False)
+    sling_dataset.build_entity2sent_onepass(wikidata_ids=wikidata_ids, dump_dir=args.out)
 
 
 def wikidata_contained_by_sling(args):

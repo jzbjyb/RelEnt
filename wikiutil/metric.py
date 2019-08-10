@@ -230,7 +230,10 @@ def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]],
         if pid in label2ind:
             logits[label2ind[pid]] = -np.inf
         label2pred[label] += np.exp(logits) / np.sum(np.exp(logits))
-        ind = np.argsort(-logits)
+        if topk == 1:
+            ind = [np.argmax(logits)]
+        else:
+            ind = np.argsort(-logits)
         ranks[pid] = [(ind2label[i], logits[i]) for i in ind]
         pred_labels.append(ind[0])
         real_labels.append(label)

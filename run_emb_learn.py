@@ -21,6 +21,10 @@ if __name__ == '__main__':
     parser.add_argument('--word_emb_size', type=int, default=50)
     parser.add_argument('--use_tbow', type=int, default=0)
     parser.add_argument('--suffix', type=str, default='.tbow')
+    parser.add_argument('--word_emb_file2', type=str, default=None, help='word embedding file')
+    parser.add_argument('--word_emb_size2', type=int, default=50)
+    parser.add_argument('--use_tbow2', type=int, default=0)
+    parser.add_argument('--suffix2', type=str, default='.tbow')
 
     parser.add_argument('--seed', type=int, default=2019)
     parser.add_argument('--save', type=str, default=None)
@@ -36,7 +40,9 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    input_size = args.emb_size * 2 + (args.word_emb_size if args.use_tbow else 0)
+    input_size = args.emb_size * 2 + \
+                 (args.word_emb_size if args.use_tbow else 0) + \
+                 (args.word_emb_size2 if args.use_tbow2 else 0)
     subprops = read_subprop_file(args.subprop_file)
     pid2plabel = get_pid2plabel(subprops)
 
@@ -62,15 +68,20 @@ if __name__ == '__main__':
         only_prop=False,
         use_tbow=args.use_tbow,
         tbow_emb_size=args.word_emb_size,
+        word_emb_file=args.word_emb_file,
+        suffix=args.suffix,
+        use_tbow2=args.use_tbow2,
+        tbow_emb_size2=args.word_emb_size2,
+        word_emb_file2=args.word_emb_file2,
+        suffix2=args.suffix2,
         only_tbow=False,
         renew_word_emb=False,
         output_pred=False,
         use_ancestor=False,
         acc_topk=1,
-        suffix=args.suffix,
+
         use_weight=True,
-        only_one_sample_per_prop=True,
-        word_emb_file=args.word_emb_file)
+        only_one_sample_per_prop=True)
 
     print('final metrics: {}'.format(np.mean(metrics[-50:])))
 

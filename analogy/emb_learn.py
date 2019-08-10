@@ -15,8 +15,9 @@ from wikiutil.util import load_tsv_as_dict, read_embeddings_from_text_file
 class EmbModel(nn.Module):
     def __init__(self, emb, num_class, num_anc_class=0,
                  input_size=400, hidden_size=128, padding_idx=None, dropout=0.0,
-                 only_prop=False, use_label=False, vocab_size=None, tbow_emb_size=None,
-                 word_emb=None, only_tbow=False, use_weight=False):
+                 only_prop=False, use_label=False,
+                 vocab_size=None, tbow_emb_size=None, word_emb=None,
+                 vocab_size2=None, tbow_emb_size2=None, word_emb2=None, only_tbow=False, use_weight=False):
         super(EmbModel, self).__init__()
         self.padding_idx = padding_idx
         self.hidden_size = hidden_size
@@ -72,6 +73,13 @@ class EmbModel(nn.Module):
                 nn.Linear(128, 64),
                 nn.BatchNorm1d(64)
             )
+        if vocab_size2:
+            if word_emb2 is not None:
+                self.tbow_emb2 = nn.Embedding.from_pretrained(
+                    torch.tensor(word_emb2).float(), freeze=True, padding_idx=padding_idx)
+            else:
+                self.tbow_emb2 = nn.Embedding(vocab_size2, tbow_emb_size2, padding_idx=padding_idx)
+
 
 
     def avg_emb(self, ind):
@@ -81,12 +89,12 @@ class EmbModel(nn.Module):
         return ind_emb
 
 
-    def combine_tbow_emb(self, tbow_ind, tbow_count, key_emb):
+    def combine_tbow_emb(self, lookup, tbow_ind, tbow_count, key_emb):
         # SHAPE: (batch_size, num_words)
         tbow_mask = tbow_ind.ne(self.padding_idx)
         tbow_count = tbow_count.float()
         tbow_count = tbow_count / (tbow_count.sum(-1, keepdim=True) + 1e-10)
-        tbow_emb = self.tbow_emb(tbow_ind)
+        tbow_emb = lookup(tbow_ind)
         '''
         #tbow_emb = tbow_emb * nn.Sigmoid()(self.tbow_emb_gate(tbow_ind))
         bs, nw = tbow_emb.size()[:2]
@@ -105,7 +113,8 @@ class EmbModel(nn.Module):
 
 
     def forward(self, head, tail, labels,
-                label_head=None, label_tail=None, tbow_ind=None, tbow_count=None, anc_labels=None):
+                label_head=None, label_tail=None, tbow_ind=None, tbow_count=None, anc_labels=None,
+                tbow_ind2=None, tbow_count2=None):
         # SHAPE: (batch_size, emb_dim)
         head_emb, tail_emb = self.avg_emb(head), self.avg_emb(tail)
         if self.use_label:
@@ -122,9 +131,16 @@ class EmbModel(nn.Module):
                 label_emb = torch.cat([label_head_emb, label_tail_emb], -1)
 
         if tbow_ind is not None and tbow_count is not None:
-            tbow_emb = self.combine_tbow_emb(tbow_ind, tbow_count, emb)
+            tbow_emb = self.combine_tbow_emb(self.tbow_emb, tbow_ind, tbow_count, emb)
             if self.only_tbow:
                 emb = tbow_emb
+            else:
+                emb = torch.cat([emb, tbow_emb], -1)
+
+        if tbow_ind2 is not None and tbow_count2 is not None:
+            tbow_emb = self.combine_tbow_emb(self.tbow_emb2, tbow_ind2, tbow_count2, emb)
+            if self.only_tbow:
+                emb = torch.cat([emb, tbow_emb], -1)
             else:
                 emb = torch.cat([emb, tbow_emb], -1)
 
@@ -136,6 +152,7 @@ class EmbModel(nn.Module):
             # SHAPE: (batch_size, num_class)
             logits = torch.mm(pred_repr, label_emb.t())
         else:
+            # SHAPE: (batch_size, num_class)
             logits = self.pred_ff(pred_repr)
             if self.num_anc_class:
                 anc_logits = self.anc_pref_ff(pred_repr)
@@ -169,9 +186,11 @@ def get_tbow_ind(batch, max_num=0):
 
 
 def data2tensor(batch, emb_id2ind, only_prop=False, num_occs=10, device=None,
-                label_samples=None, use_tbow=0, use_anc=False, num_occs_label=10):
-    if use_tbow:
+                label_samples=None, use_tbow=0, use_tbow2=0, use_anc=False, num_occs_label=10):
+    if use_tbow and not use_tbow2:
         batch, tbow_batch = zip(*batch)
+    elif use_tbow2:
+        batch, tbow_batch, tbow_batch2 = zip(*batch)
 
     label_head = label_tail = None
     if only_prop:
@@ -201,28 +220,47 @@ def data2tensor(batch, emb_id2ind, only_prop=False, num_occs=10, device=None,
         tbow_ind, tbow_count = get_tbow_ind(tbow_batch, max_num=use_tbow)
         tbow_ind = tbow_ind.to(device)
         tbow_count = tbow_count.to(device)
+    if use_tbow2:
+        tbow_ind2, tbow_count2 = get_tbow_ind(tbow_batch2, max_num=use_tbow)
+        tbow_ind2 = tbow_ind2.to(device)
+        tbow_count2 = tbow_count2.to(device)
+    else:
+        tbow_ind2, tbow_count2 = None, None
 
-    return head, tail, labels, label_head, label_tail, tbow_ind, tbow_count, anc_labels
+    return head, tail, labels, label_head, label_tail, tbow_ind, tbow_count, anc_labels, tbow_ind2, tbow_count2
 
 
-def one_epoch(model, optimizer, samples, batch_size, emb_id2ind,
+def samples2tensors(samples, batch_size, emb_id2ind,
+                    num_occs, device, only_prop, label_samples=None,
+                    use_tbow=0, use_tbow2=0, use_anc=False, num_occs_label=0):
+    tensors: List = []
+    for batch in range(0, len(samples), batch_size):
+        batch = samples[batch:batch + batch_size]
+        tensor = data2tensor(
+            batch, emb_id2ind, only_prop=only_prop, num_occs=num_occs, device=device,
+            label_samples=label_samples, use_tbow=use_tbow, use_tbow2=use_tbow2,
+            use_anc=use_anc, num_occs_label=num_occs_label)
+        tensors.append(tensor)
+    return tensors
+
+
+def one_epoch(model, optimizer, samples, tensors, batch_size, emb_id2ind,
               num_occs, device, only_prop, is_train, label_samples=None,
               use_tbow=0, use_anc=False, num_occs_label=0):
     if is_train:
         model.train()
-        shuffle(samples)
+        #shuffle(samples)
     else:
         model.eval()
 
     loss_li = []
     pred_li = []
     pred_label_li = []
-    for batch in range(0, len(samples), batch_size):
-        batch = samples[batch:batch + batch_size]
-        head, tail, labels, label_head, label_tail, tbow_ind, tbow_count, anc_labels = data2tensor(
-            batch, emb_id2ind, only_prop=only_prop, num_occs=num_occs, device=device,
-            label_samples=label_samples, use_tbow=use_tbow, use_anc=use_anc, num_occs_label=num_occs_label)
-        logits, loss = model(head, tail, labels, label_head, label_tail, tbow_ind, tbow_count, anc_labels)
+    for i in range(0, len(samples), batch_size):
+        batch = samples[i:i + batch_size]
+        tensor = tensors[i // batch_size]
+        logits, loss = model(*tensor)
+        labels = tensor[2]  # TODO: better structure
         if is_train and loss.requires_grad:
             optimizer.zero_grad()
             loss.backward()
@@ -230,13 +268,14 @@ def one_epoch(model, optimizer, samples, batch_size, emb_id2ind,
             optimizer.step()
 
         loss_li.append(loss.item())
+        logits = logits.detach().cpu().numpy()
         if use_tbow:
-            pred_li.extend([(b[0][0][0], logits[i].detach().cpu().numpy(), labels[i].item())
+            pred_li.extend([(b[0][0][0], logits[i], labels[i].item())
                             for i, b in enumerate(batch)])
         else:
-            pred_li.extend([(b[0][0], logits[i].detach().cpu().numpy(), labels[i].item())
+            pred_li.extend([(b[0][0], logits[i], labels[i].item())
                             for i, b in enumerate(batch)])
-        pred_label_li.extend([np.argmax(logits[i].detach().cpu().numpy()) for i, b in enumerate(batch)])
+        pred_label_li.extend([np.argmax(logits[i]) for i, b in enumerate(batch)])
 
     return loss_li, pred_li, pred_label_li
 
@@ -244,9 +283,10 @@ def one_epoch(model, optimizer, samples, batch_size, emb_id2ind,
 def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leaves=False, only_test_on=None,
                   epoch=10, input_size=400, batch_size=128, use_cuda=False, early_stop=None,
                   num_occs=10, num_occs_label=10, hidden_size=128, dropout=0.0, lr=0.001, only_prop=False,
-                  use_tbow=0, tbow_emb_size=50, word_emb_file=None, only_tbow=False,
+                  use_tbow=0, use_tbow2=0, tbow_emb_size=50, tbow_emb_size2=50, word_emb_file=None,
+                  word_emb_file2=None, suffix='.tbow', suffix2='.tbow', only_tbow=False,
                   renew_word_emb=False, output_pred=False, use_ancestor=False, filter_labels=False,
-                  acc_topk=1, suffix='.tbow', use_weight=False, only_one_sample_per_prop=False, optimizer='adam'):
+                  acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam'):
     subprops = read_subprop_file(subprop_file)
     pid2plabel = get_pid2plabel(subprops)
     subtrees, _ = get_all_subtree(subprops)
@@ -286,30 +326,56 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
     print('#ancestor {}'.format(len(anc2ind)))
 
     train_samples_tbow = dev_samples_tbow = test_samples_tbow = None
-    vocab_size = None
-    word_emb = None
+    vocab_size, vocab_size2 = None, None
+    word_emb, word_emb2 = None, None
     if use_tbow:
         train_samples_tbow = read_tbow_file(os.path.join(data_dir, 'train' + suffix))
         assert len(train_samples_tbow) == len(train_samples)
-        train_samples = list(zip(train_samples, train_samples_tbow))
+        if use_tbow2:
+            train_samples_tbow2 = read_tbow_file(os.path.join(data_dir, 'train' + suffix2))
+            assert len(train_samples_tbow2) == len(train_samples)
+            train_samples = list(zip(train_samples, train_samples_tbow, train_samples_tbow2))
+        else:
+            train_samples = list(zip(train_samples, train_samples_tbow))
 
         dev_samples_tbow = read_tbow_file(os.path.join(data_dir, 'dev' + suffix))
         assert len(dev_samples_tbow) == len(dev_samples)
-        dev_samples = list(zip(dev_samples, dev_samples_tbow))
+        if use_tbow2:
+            dev_samples_tbow2 = read_tbow_file(os.path.join(data_dir, 'dev' + suffix2))
+            assert len(dev_samples_tbow2) == len(dev_samples)
+            dev_samples = list(zip(dev_samples, dev_samples_tbow, dev_samples_tbow2))
+        else:
+            dev_samples = list(zip(dev_samples, dev_samples_tbow))
 
         test_samples_tbow = read_tbow_file(os.path.join(data_dir, 'test' + suffix))
         assert len(test_samples_tbow) == len(test_samples)
-        test_samples = list(zip(test_samples, test_samples_tbow))
+        if use_tbow2:
+            test_samples_tbow2 = read_tbow_file(os.path.join(data_dir, 'test' + suffix2))
+            assert len(test_samples_tbow2) == len(test_samples)
+            test_samples = list(zip(test_samples, test_samples_tbow, test_samples_tbow2))
+        else:
+            test_samples = list(zip(test_samples, test_samples_tbow))
 
         if word_emb_file:
             word_emb_id2ind, word_emb = read_embeddings_from_text_file(
-                word_emb_file, debug=False, emb_size=50, first_line=False, use_padding=True, split_char=' ')
+                word_emb_file, debug=False, emb_size=tbow_emb_size, first_line=False, use_padding=True, split_char=' ')
             vocab_size = len(word_emb_id2ind)
             if renew_word_emb:
                 word_emb = None
         else:
             vocab_size = len(load_tsv_as_dict(os.path.join(data_dir, 'tbow.vocab')))
-        print('vocab size {}'.format(vocab_size))
+
+        if word_emb_file2:
+            word_emb_id2ind2, word_emb2 = read_embeddings_from_text_file(
+                word_emb_file2, debug=False, emb_size=tbow_emb_size2, first_line=False, use_padding=True, split_char=' ')
+            vocab_size2 = len(word_emb_id2ind2)
+            if renew_word_emb:
+                word_emb2 = None
+        else:
+            vocab_size2 = len(load_tsv_as_dict(os.path.join(data_dir, 'tbow2.vocab')))
+
+        print('vocab size 1 {}'.format(vocab_size))
+        print('vocab size 2 {}'.format(vocab_size2))
 
     if filter_leaves:
         print('filter leaves')
@@ -378,8 +444,9 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                          hidden_size=hidden_size, padding_idx=0,
                          dropout=dropout, only_prop=only_prop,
                          use_label=use_label,
-                         vocab_size=vocab_size, tbow_emb_size=tbow_emb_size,
-                         word_emb=word_emb, only_tbow=only_tbow, use_weight=use_weight)
+                         vocab_size=vocab_size, tbow_emb_size=tbow_emb_size, word_emb=word_emb,
+                         vocab_size2=vocab_size2, tbow_emb_size2=tbow_emb_size2, word_emb2=word_emb2,
+                         only_tbow=only_tbow, use_weight=use_weight)
     emb_model.to(device)
     if optimizer == 'adam':
         optimizer = torch.optim.Adam(emb_model.parameters(), lr=lr)
@@ -392,22 +459,31 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
 
     last_metric, last_count = None, 0
     metrics = []
+    train_tensors = samples2tensors(
+        train_samples, batch_size, emb_id2ind, num_occs, device, only_prop, label_samples=label_samples,
+        use_tbow=use_tbow, use_tbow2=use_tbow2, use_anc=use_ancestor, num_occs_label=num_occs_label)
+    dev_tensors = samples2tensors(
+        dev_samples, batch_size, emb_id2ind, num_occs, device, only_prop, label_samples=label_samples,
+        use_tbow=use_tbow, use_tbow2=use_tbow2, use_anc=use_ancestor, num_occs_label=num_occs_label)
+    test_tensors = samples2tensors(
+        test_samples, batch_size, emb_id2ind, num_occs, device, only_prop, label_samples=label_samples,
+        use_tbow=use_tbow, use_tbow2=use_tbow2, use_anc=use_ancestor, num_occs_label=num_occs_label)
     for e in range(epoch):
         # train
         train_loss, train_pred, _ = one_epoch(
-            emb_model, optimizer, train_samples, batch_size,
+            emb_model, optimizer, train_samples, train_tensors, batch_size,
             emb_id2ind, num_occs, device, only_prop, is_train=True,
             label_samples=label_samples, use_tbow=use_tbow, use_anc=use_ancestor,
             num_occs_label=num_occs_label)
         # dev
         dev_loss, dev_pred, _ = one_epoch(
-            emb_model, optimizer, dev_samples, batch_size,
+            emb_model, optimizer, dev_samples, dev_tensors, batch_size,
             emb_id2ind, num_occs, device, only_prop, is_train=False,
             label_samples=label_samples, use_tbow=use_tbow, use_anc=use_ancestor,
             num_occs_label=num_occs_label)
         # test
         test_loss, test_pred, _ = one_epoch(
-            emb_model, optimizer, test_samples, batch_size,
+            emb_model, optimizer, test_samples, test_tensors, batch_size,
             emb_id2ind, num_occs, device, only_prop, is_train=False,
             label_samples=label_samples, use_tbow=use_tbow, use_anc=use_ancestor,
             num_occs_label=num_occs_label)

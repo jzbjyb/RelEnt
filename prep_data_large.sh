@@ -4,7 +4,7 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data_new/analogy_dataset/split_middle_by_entail_nway_subgraph10_sample5_parent_occ_popu
+data_dir=data_new/analogy_dataset/split_middle_by_entail_nway_subgraph10_sample50_parent_occ_popu
 load_split=data_new/analogy_dataset/split_middle_overlap
 data_format=n_way
 subgraph_file=data_new/subgraph/property_occurrence_prop435k_split.subgraph
@@ -29,7 +29,7 @@ python prep_data.py \
     --max_occ_per_prop 10000 \
     --min_occ_per_prop 10 \
     --num_occ_per_subgraph 10 \
-    --num_sample 5 \
+    --num_sample 50 \
     --contain_train \
     --allow_empty_split \
     --load_split ${load_split} \

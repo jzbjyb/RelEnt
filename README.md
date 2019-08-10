@@ -75,3 +75,7 @@ mention_str = doc.phrase(mention.begin, mention.end)
 for e in mention.evokes():
     print(e.data(pretty=True))
 ```
+
+## Experiments
+
+[Google sheet](https://docs.google.com/spreadsheets/d/17jdKww8Ao6B8ahfjQMhQ3dzlBWdc1zAHSxcU6yz8nf8/edit?usp=sharing) used to track experimental resutls.

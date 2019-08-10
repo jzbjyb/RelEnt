@@ -33,6 +33,7 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--early_stop', type=int, default=0)
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--only_one_sample_per_prop', action='store_true')
 
     args = parser.parse_args()
 
@@ -79,9 +80,8 @@ if __name__ == '__main__':
         output_pred=False,
         use_ancestor=False,
         acc_topk=1,
-
         use_weight=True,
-        only_one_sample_per_prop=True)
+        only_one_sample_per_prop=args.only_one_sample_per_prop)
 
     print('final metrics: {}'.format(np.mean(metrics[-50:])))
 

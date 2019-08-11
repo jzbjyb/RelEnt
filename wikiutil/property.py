@@ -497,6 +497,26 @@ class PropertySubtree():
 
 
     @staticmethod
+    def is_split(pid: str, childs: List[str]):
+        pid = pid.split('_')[0]
+        for c in childs:
+            if c.split('_')[0] != pid:
+                return False
+        return True
+
+
+    @staticmethod
+    def traverse_each_tier_subtree(subtree):
+        yield subtree[0], [c[0] for c in subtree[1]]
+        for c in subtree[1]:
+            yield from PropertySubtree.traverse_each_tier_subtree(c)
+
+
+    def traverse_each_tier(self):
+        yield from PropertySubtree.traverse_each_tier_subtree(self.tree)
+
+
+    @staticmethod
     def split_by_pm2(ratio: List[float], candidates: List):
         ratio = np.array(ratio)
         splits = [[] for _ in range(len(ratio))]
@@ -727,6 +747,29 @@ def get_all_subtree(subprops: List[Tuple[Tuple[str, str], List[Tuple]]]) \
     print('{} isolated prop'.format(len(isolate)))
 
     return subtrees, isolate
+
+
+def save_all_subtree(subtrees: List[PropertySubtree], subprops: List, filename: str):
+    pid2plabel = dict(p[0] for p in subprops)
+    p2c: Dict[str, set] = defaultdict(set)
+    for subtree in subtrees:
+        for c, anc in subtree.traverse(return_ancestors=True):
+            if len(anc) > 0:
+                p = anc[-1]
+                p2c[p].add(c)
+            _ = p2c[c]
+    new_subprops = []
+    for pid, childs in p2c.items():
+        new_subprops.append(((pid, pid2plabel[pid]), [(c, pid2plabel[c]) for c in childs]))
+    save_subprops(new_subprops, filename)
+
+
+def save_subprops(subprops: List, filename: str):
+    with open(filename, 'w') as fout:
+        for (pid, plabel), childs in tqdm(sorted(subprops, key=lambda x: x[0][0])):
+            ln = '{},{}\t{}\n'.format(pid, plabel,
+                '\t'.join(map(lambda x: ','.join(x), childs)))
+            fout.write(ln)
 
 
 def get_is_ancestor(subtrees: List[PropertySubtree]):

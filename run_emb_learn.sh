@@ -20,7 +20,7 @@ suffix2='.tbow'
 
 for seed in 0 1 2 3 4 2019 1000 256 77 9541
 do
-    for use_tbow in 0 5
+    for use_tbow in 0
     do
         echo "======="
         echo ${seed} ${use_tbow}
@@ -42,6 +42,7 @@ do
             --early_stop 100 \
             --seed ${seed} \
             --only_one_sample_per_prop \
-            --filter_labels
+            --filter_labels \
+            --use_gnn
     done
 done

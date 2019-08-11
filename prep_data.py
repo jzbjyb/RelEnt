@@ -67,6 +67,7 @@ if __name__ == '__main__':
     if args.remove_common_child:
         print('remove common child')
         remove_common_child(subtrees)
+    save_all_subtree(subtrees + isolate, subprops, os.path.join(args.out_dir, 'subprops'))
 
     subtree_pids = set()  # only consider properties in subtrees
     [subtree_pids.add(pid) for subtree in subtrees for pid in subtree.traverse()]

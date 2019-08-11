@@ -33,8 +33,10 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--early_stop', type=int, default=0)
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--only_one_sample_per_prop', action='store_true')
     parser.add_argument('--filter_labels', action='store_true')
+    parser.add_argument('--use_gnn', action='store_true')
 
     args = parser.parse_args()
 
@@ -58,7 +60,7 @@ if __name__ == '__main__':
         only_test_on=None,
         optimizer=args.optimizer,
         epoch=args.epoch,
-        batch_size=128,
+        batch_size=args.batch_size,
         use_cuda=True,
         early_stop=args.early_stop,
         num_occs=10,
@@ -82,7 +84,8 @@ if __name__ == '__main__':
         use_ancestor=False,
         acc_topk=1,
         use_weight=True,
-        only_one_sample_per_prop=args.only_one_sample_per_prop)
+        only_one_sample_per_prop=args.only_one_sample_per_prop,
+        use_gnn=args.use_gnn)
 
     print('final metrics: {}'.format(np.mean(metrics[-50:])))
 

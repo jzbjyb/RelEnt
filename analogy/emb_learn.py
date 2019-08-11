@@ -10,6 +10,7 @@ from wikiutil.metric import accuracy_nway, get_ranks
 from wikiutil.property import read_subprop_file, get_pid2plabel, get_all_subtree, get_is_ancestor, \
     get_is_parent, get_leaves, read_nway_file, read_tbow_file
 from wikiutil.util import load_tsv_as_dict, read_embeddings_from_text_file
+from .emb_gnn import build_graph, EmbGnnModel
 
 
 class EmbModel(nn.Module):
@@ -249,7 +250,7 @@ def one_epoch(model, optimizer, samples, tensors, batch_size, emb_id2ind,
               use_tbow=0, use_anc=False, num_occs_label=0):
     if is_train:
         model.train()
-        #shuffle(samples)
+        #shuffle(samples)  # TODO debug
     else:
         model.eval()
 
@@ -286,7 +287,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                   use_tbow=0, use_tbow2=0, tbow_emb_size=50, tbow_emb_size2=50, word_emb_file=None,
                   word_emb_file2=None, suffix='.tbow', suffix2='.tbow', only_tbow=False,
                   renew_word_emb=False, output_pred=False, use_ancestor=False, filter_labels=False,
-                  acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam'):
+                  acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam', use_gnn=False):
     subprops = read_subprop_file(subprop_file)
     pid2plabel = get_pid2plabel(subprops)
     subtrees, _ = get_all_subtree(subprops)
@@ -442,6 +443,69 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         device = torch.device('cpu')
 
     print('#samples in train/dev/test: {} {} {}'.format(len(train_samples), len(dev_samples), len(test_samples)))
+
+    if use_gnn:
+        graph_data, meta_data = build_graph(
+            train_samples, dev_samples, test_samples,
+            'data/see_also.tsv', os.path.join(data_dir, 'subprops'),
+            emb_id2ind, emb)
+        graph_data = dict((k, v.to(device)) for k, v in graph_data.items())
+
+        emb_model = EmbGnnModel(feat_size=input_size, hidden_size=hidden_size,
+                                num_class=len(label2ind), dropout=dropout)
+        emb_model.to(device)
+
+        optimizer = torch.optim.RMSprop(emb_model.parameters(), lr=lr)
+
+        last_metric, last_count = None, 0
+        metrics = []
+        for e in range(epoch):
+            # train
+            emb_model.train()
+            train_logits, _, _, train_loss, _, _ = emb_model(**graph_data)
+            train_logits = train_logits.detach().cpu().numpy()
+            train_pred = [(pid, train_logits[i], l) for i, (pid, l) in
+                          enumerate(zip(meta_data['train_pids'], meta_data['train_labels']))]
+
+            if train_loss.requires_grad:
+                optimizer.zero_grad()
+                train_loss.backward()
+                torch.nn.utils.clip_grad_norm_(emb_model.parameters(), 1.0)
+                optimizer.step()
+
+            # eval
+            emb_model.eval()
+            _, dev_logits, test_logits, _, dev_loss, test_loss = emb_model(**graph_data)
+            dev_logits = dev_logits.detach().cpu().numpy()
+            test_logits = test_logits.detach().cpu().numpy()
+
+            dev_pred = [(pid, dev_logits[i], l) for i, (pid, l) in
+                        enumerate(zip(meta_data['dev_pids'], meta_data['dev_labels']))]
+            test_pred = [(pid, test_logits[i], l) for i, (pid, l) in
+                         enumerate(zip(meta_data['test_pids'], meta_data['test_labels']))]
+
+            # metrics
+            train_metric, train_ranks, train_pred_label, _ = accuracy_nway(
+                train_pred, ind2label=ind2label, topk=acc_topk, num_classes=len(label2ind))
+            dev_metric, dev_ranks, dev_pred_label, _ = accuracy_nway(
+                dev_pred, ind2label=ind2label, topk=acc_topk, num_classes=len(label2ind))
+            test_metric, test_ranks, test_pred_label, _ = accuracy_nway(
+                test_pred, ind2label=ind2label, topk=acc_topk, num_classes=len(label2ind))
+
+            print('train: {:>.3f}, {:>.3f} dev: {:>.3f}, {:>.3f} test: {:>.3f}, {:>.3f}'.format(
+                train_loss.item(), train_metric,
+                dev_loss.item(), dev_metric,
+                test_loss.item(), test_metric))
+
+            if early_stop and last_metric and last_metric > dev_metric:
+                last_count += 1
+                if last_count >= early_stop:
+                    print('early stop')
+                    break
+            last_metric = dev_metric
+            metrics.append(test_metric)
+
+        return metrics, test_ranks, dev_ranks, train_ranks
 
     emb_model = EmbModel(emb, len(label2ind), len(anc2ind), input_size=input_size,
                          hidden_size=hidden_size, padding_idx=0,

@@ -4,16 +4,14 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data_new/analogy_dataset/split_middle_by_entail_nway_subgraph10_sample50_parent_occ_popu
-load_split=data_new/analogy_dataset/split_middle_overlap
+data_dir=data_new/analogy_dataset/split_middle_dedup_by_entail_nway_subgraph10_sample5_parent_occ_popu
+load_split=data_new/analogy_dataset/split_middle_overlap_dedup
 data_format=n_way
-subgraph_file=data_new/subgraph/property_occurrence_prop435k_split.subgraph
-#subgraph_file=data/property_occurrence_subtree.subgraph
-prop_dir=data_new/property_occurrence_prop435k_split
-#prop_file=data/property_occurrence_prop580k_split/subprops
-prop_file=data_new/property_occurrence_prop435k_split/subprops_hard
+subgraph_file=data_new/subgraph/property_occurrence_prop435k_split_dedup.subgraph
+prop_dir=data_new/property_occurrence_prop435k_split_dedup
+prop_file=data_new/property_occurrence_prop435k_split_dedup/subprops_random
 method=by_entail-n_way
-emb_file=../pytorch_big_graph/emb_new/transe.txt
+emb_file=../pytorch_big_graph/emb_new_dedup/transe.txt
 #entityid2name_file=data/split_merge_triples/property_occurrence_prop580k_split_entityid2name.pkl
 
 mkdir -p ${data_dir}
@@ -29,7 +27,7 @@ python prep_data.py \
     --max_occ_per_prop 10000 \
     --min_occ_per_prop 10 \
     --num_occ_per_subgraph 10 \
-    --num_sample 50 \
+    --num_sample 5 \
     --contain_train \
     --allow_empty_split \
     --load_split ${load_split} \

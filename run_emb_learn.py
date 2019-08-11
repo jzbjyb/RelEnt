@@ -34,6 +34,7 @@ if __name__ == '__main__':
     parser.add_argument('--early_stop', type=int, default=0)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--only_one_sample_per_prop', action='store_true')
+    parser.add_argument('--filter_labels', action='store_true')
 
     args = parser.parse_args()
 
@@ -52,7 +53,7 @@ if __name__ == '__main__':
         args.emb_file,
         args.subprop_file,
         use_label=False,
-        filter_labels=False,
+        filter_labels=args.filter_labels,
         filter_leaves=False,
         only_test_on=None,
         optimizer=args.optimizer,

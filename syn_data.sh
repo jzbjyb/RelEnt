@@ -60,28 +60,35 @@ python prop.py --task split_leaf_properties \
     --inp data_new/property_occurrence_prop435k/:data_new/subgraph/property_occurrence_prop435k.subgraph:data/subprops.txt:data/ontology/node2depth.tsv:data/useful_props.tsv \
     --out data_new/property_occurrence_prop435k_split/
 
+# remove duplicates between relations and their ancestors
+mkdir data_new/property_occurrence_prop435k_split_dedup/
+python prop.py --task remove_dup_between_child_ancestor \
+    --inp data_new/property_occurrence_prop435k_split/:data_new/property_occurrence_prop435k_split/subprops \
+    --out data_new/property_occurrence_prop435k_split_dedup/
+cp data_new/property_occurrence_prop435k_split/subprops data_new/property_occurrence_prop435k_split_dedup/subprops
+
 # merge property instances
 python prop.py --task merge_poccs \
-    --inp data_new/property_occurrence_prop435k_split/ \
-    --out data_new/split_merge_triples/property_occurrence_prop435k_split.tsv
-shuf data_new/split_merge_triples/property_occurrence_prop435k_split.tsv > \
-    data_new/split_merge_triples/property_occurrence_prop435k_split_shuf.tsv
+    --inp data_new/property_occurrence_prop435k_split_dedup/ \
+    --out data_new/split_merge_triples/property_occurrence_prop435k_split_dedup.tsv
+shuf data_new/split_merge_triples/property_occurrence_prop435k_split_dedup.tsv > \
+    data_new/split_merge_triples/property_occurrence_prop435k_split_dedup_shuf.tsv
 
 # generate new subgraphs
 python hiro_code.py \
     --wikitext-dir data/title_id_map \
     --extracted-dir data/hiro_wikidata/ \
     --output-dir data_new/subgraph/ \
-    --triple_file data_new/split_merge_triples/property_occurrence_prop435k_split.tsv \
+    --triple_file data_new/split_merge_triples/property_occurrence_prop435k_split_dedup.tsv \
     --eid_file data_new/property_eid/property_occurrence_all_ds_notonlytree.eid
 
 python prop.py --task hiro_to_subgraph \
     --inp data_new/property_eid/property_occurrence_all_ds_notonlytree.eid:data_new/subgraph/hiro_subgraph.jsonl \
-    --out data_new/subgraph/property_occurrence_prop435k_split.subgraph
+    --out data_new/subgraph/property_occurrence_prop435k_split_dedup.subgraph
 
 # train KGE models and put it to ${emb}
 
 # replace parents
 python prop.py --task replace_by_hard_split \
-    --inp data_new/property_occurrence_prop435k_split/subprops:${emb} \
-    --out data_new/property_occurrence_prop435k_split
+    --inp data_new/property_occurrence_prop435k_split_dedup/subprops:${emb} \
+    --out data_new/property_occurrence_prop435k_split_dedup/subprops_random

@@ -15,7 +15,7 @@ from operator import itemgetter
 from sklearn.metrics.pairwise import cosine_similarity
 from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, \
     hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file, PropertyOccurrence, read_subgraph_file, \
-    read_prop_occ_file_from_dir, property_split, get_pid2plabel, filter_bow
+    read_prop_occ_file_from_dir, property_split, get_pid2plabel, filter_bow, get_is_ancestor
 from wikiutil.util import read_emb_ids, load_tsv_as_dict, load_tsv_as_list, read_embeddings_from_text_file
 from wikiutil.wikidata_query_service import get_property_occurrence
 from wikiutil.textual_relation import WikipediaDataset, SlingDataset
@@ -767,7 +767,7 @@ def make_hard_split(subprops_split: List,
     return p2hard
 
 
-def replace_by_hard_split(args):
+def replace_by_hard_split(args, method='middle'):
     subprops_split, emb = args.inp.split(':')
 
     emb_id2ind, emb = read_embeddings_from_text_file(emb, debug=False, emb_size=200, use_padding=True)
@@ -775,7 +775,7 @@ def replace_by_hard_split(args):
     pid2plabel = dict(p[0] for p in subprops_split)
 
     # get hard parent
-    p2hard = make_hard_split(subprops_split, emb, emb_id2ind, method='middle')
+    p2hard = make_hard_split(subprops_split, emb, emb_id2ind, method=method)
 
     # save subprop
     hard2p = dict((v, k) for k, v in p2hard.items())
@@ -793,7 +793,7 @@ def replace_by_hard_split(args):
                 if cpid in p2hard:
                     c[j] = (p2hard[cpid], pid2plabel[p2hard[cpid]])
 
-    with open(os.path.join(args.out, 'subprops_hard'), 'w') as fout:
+    with open(args.out, 'w') as fout:
         for (pid, plabel), c in subprops_split:
             fout.write('{},{}\t{}\n'.format(
                 pid, plabel, '\t'.join(['{},{}'.format(cpid, cplabel) for cpid, cplabel in c])))
@@ -1094,6 +1094,43 @@ def property_level_bow_sling_on_alldocs(args, dist_thres, max_num_sent=None, spl
         pickle.dump(pid2context, fout)
 
 
+def remove_dup_between_child_ancestor(args):
+    prop_occ_dir, subprop_file = args.inp.split(':')
+
+    subprops = read_subprop_file(subprop_file)
+    subtrees, isolate = get_all_subtree(subprops)
+
+    all_pids = [p[0][0] for p in subprops]
+    print('totally {} pids'.format(len(all_pids)))
+    is_ancestor = get_is_ancestor(subtrees)
+    pid2childs: Dict[str, set] = defaultdict(set)
+    for a, c in is_ancestor:
+        pid2childs[a].add(c)
+
+    poccs = PropertyOccurrence.build(sorted(all_pids), prop_occ_dir).pid2occs
+    for pid, occs in poccs.items():
+        if pid not in pid2childs:
+            shutil.copy(os.path.join(prop_occ_dir, pid + '.txt'), os.path.join(args.out, pid + '.txt'))
+            continue
+        all_child_occs = set()
+        for cpid in pid2childs[pid]:
+            if cpid not in poccs:
+                continue
+            all_child_occs.update(poccs[cpid])
+        new_ocss = set(occs) - all_child_occs
+        raw_num = len(occs)
+        child_num = len(all_child_occs)
+        new_num = len(new_ocss)
+        joint_ratio = (raw_num - new_num) / (min(raw_num, child_num) + 1e-10)
+        if raw_num != new_num:
+            print('{}: {} - {} -> {} = {}'.format(pid, raw_num, child_num, new_num, joint_ratio))
+            with open(os.path.join(args.out, pid + '.txt'), 'w') as fout:
+                for h, t in new_ocss:
+                    fout.write('{}\t{}\n'.format(h, t))
+        else:
+            shutil.copy(os.path.join(prop_occ_dir, pid + '.txt'), os.path.join(args.out, pid + '.txt'))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
@@ -1111,7 +1148,8 @@ if __name__ == '__main__':
                                  'get_wikidata_item_popularity_by_sling',
                                  'wikidata_contained_by_sling',
                                  'get_sling_tokens', 'filter_sling_tokens',
-                                 'property_level_bow_sling_on_alldocs'], required=True)
+                                 'property_level_bow_sling_on_alldocs',
+                                 'remove_dup_between_child_ancestor'], required=True)
     parser.add_argument('--inp', type=str, required=None)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -1187,7 +1225,7 @@ if __name__ == '__main__':
         split_leaf_properties(args)
     elif args.task == 'replace_by_hard_split':
         # get hard parent for each split
-        replace_by_hard_split(args)
+        replace_by_hard_split(args, method='random')
     elif args.task == 'link_entity_to_wikipedia':
         link_entity_to_wikipedia(args, max_num_sent=1000)
     elif args.task == 'link_entity_to_wikipedia_by_sling':
@@ -1214,3 +1252,5 @@ if __name__ == '__main__':
         --out data/textual/wikipedia_sling/pid2context.pkl
         '''
         property_level_bow_sling_on_alldocs(args, dist_thres=10, max_num_sent=None, split_token=False, max_token=10000)
+    elif args.task == 'remove_dup_between_child_ancestor':
+        remove_dup_between_child_ancestor(args)

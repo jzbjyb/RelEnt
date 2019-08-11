@@ -148,7 +148,7 @@ if __name__ == '__main__':
         train_prop, dev_prop, test_prop = [], [], []
         for subtree in subtrees:
             for train_p, dev_p, test_p in subtree.split_within(
-                    tr, dev, te, filter_set=all_propids, allow_empty_split=args.allow_empty_split):
+                    tr, dev, te, filter_set=all_propids, allow_empty_split=args.allow_empty_split, use_pm2=True):
                 train_prop.extend(train_p)
                 dev_prop.extend(dev_p)
                 test_prop.extend(test_p)
@@ -166,7 +166,7 @@ if __name__ == '__main__':
             for subtree in subtrees:
                 for parent, train_p, dev_p, test_p in subtree.split_within(
                         tr, dev, te, return_parent=True, filter_set=all_propids,
-                        allow_empty_split=args.allow_empty_split):
+                        allow_empty_split=args.allow_empty_split, use_pm2=True):
                     if parent in all_propids:
                         parent_prop.append(parent)
                         train_prop.extend(train_p)

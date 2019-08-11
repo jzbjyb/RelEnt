@@ -5,13 +5,13 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-dataset_dir=data_new/analogy_dataset/split_middle_by_entail_nway_subgraph10_sample5_parent_occ_popu/
-subprop_file=data_new/property_occurrence_prop435k_split/subprops_hard
-emb_file=../pytorch_big_graph/emb_new/transe.txt
+dataset_dir=data_new/analogy_dataset/split_middle_dedup_by_entail_nway_subgraph10_sample5_parent_occ_popu/
+subprop_file=data_new/property_occurrence_prop435k_split_dedup/subprops_random
+emb_file=../pytorch_big_graph/emb_new_dedup/transe.txt
 #word_emb_file='data/emb/glove.6B.50d.txt'
 #word_emb_size=50
 #suffix='.tbow'
-word_emb_file='../pytorch_big_graph/emb_new/transe.txt'
+word_emb_file='../pytorch_big_graph/emb_new_dedup/transe.txt'
 word_emb_size=200
 suffix='.kg_tbow'
 word_emb_file2='data/emb/glove.6B.50d.txt'
@@ -41,6 +41,7 @@ do
             --epoch 500 \
             --early_stop 100 \
             --seed ${seed} \
-            --only_one_sample_per_prop
+            --only_one_sample_per_prop \
+            --filter_labels
     done
 done

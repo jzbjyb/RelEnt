@@ -4,14 +4,14 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data_new/analogy_dataset/split_middle_overlap_popu
-load_split=data_new/analogy_dataset/split_middle_overlap
+data_dir=data_new/analogy_dataset/split_middle_overlap_dedup_popu
+load_split=data_new/analogy_dataset/split_middle_overlap_dedup
 data_format=n_way
-subgraph_file=data_new/subgraph/property_occurrence_prop435k_split.subgraph
-prop_dir=data_new/property_occurrence_prop435k_split
-prop_file=data_new/property_occurrence_prop435k_split/subprops_hard
+subgraph_file=data_new/subgraph/property_occurrence_prop435k_split_dedup.subgraph
+prop_dir=data_new/property_occurrence_prop435k_split_dedup
+prop_file=data_new/property_occurrence_prop435k_split_dedup/subprops_random
 method=by_entail-overlap
-emb_file=../pytorch_big_graph/emb_new/transe.txt
+emb_file=../pytorch_big_graph/emb_new_dedup/transe.txt
 #entityid2name_file=data_new/split_merge_triples/property_occurrence_prop580k_split_entityid2name.pkl
 
 mkdir -p ${data_dir}

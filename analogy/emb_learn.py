@@ -365,14 +365,15 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         else:
             vocab_size = len(load_tsv_as_dict(os.path.join(data_dir, 'tbow.vocab')))
 
-        if word_emb_file2:
-            word_emb_id2ind2, word_emb2 = read_embeddings_from_text_file(
-                word_emb_file2, debug=False, emb_size=tbow_emb_size2, first_line=False, use_padding=True, split_char=' ')
-            vocab_size2 = len(word_emb_id2ind2)
-            if renew_word_emb:
-                word_emb2 = None
-        else:
-            vocab_size2 = len(load_tsv_as_dict(os.path.join(data_dir, 'tbow2.vocab')))
+        if use_tbow2:
+            if word_emb_file2:
+                word_emb_id2ind2, word_emb2 = read_embeddings_from_text_file(
+                    word_emb_file2, debug=False, emb_size=tbow_emb_size2, first_line=False, use_padding=True, split_char=' ')
+                vocab_size2 = len(word_emb_id2ind2)
+                if renew_word_emb:
+                    word_emb2 = None
+            else:
+                vocab_size2 = len(load_tsv_as_dict(os.path.join(data_dir, 'tbow2.vocab')))
 
         print('vocab size 1 {}'.format(vocab_size))
         print('vocab size 2 {}'.format(vocab_size2))
@@ -439,6 +440,8 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         device = torch.device('cuda')
     else:
         device = torch.device('cpu')
+
+    print('#samples in train/dev/test: {} {} {}'.format(len(train_samples), len(dev_samples), len(test_samples)))
 
     emb_model = EmbModel(emb, len(label2ind), len(anc2ind), input_size=input_size,
                          hidden_size=hidden_size, padding_idx=0,

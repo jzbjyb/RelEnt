@@ -5,11 +5,13 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
+subprop_file=data_new/property_occurrence_prop435k_split_dedup/subprops_random
+
 for method in avg mixgau_fast
 do
-    for emb in ../pytorch_big_graph/emb_new/transe.txt ../pytorch_big_graph/emb_new/complex.txt ../pytorch_big_graph/emb_new/distmult.txt
+    for emb in ../pytorch_big_graph/emb_new_dedup/transe.txt ../pytorch_big_graph/emb_new_dedup/complex.txt ../pytorch_big_graph/emb_new_dedup/distmult.txt
     do
-        for data_dir in "data_new/analogy_dataset/split_middle_overlap/" "data_new/analogy_dataset/split_middle_overlap_popu/" "data_new/analogy_dataset/split_middle_overlap_popu_withtest/"
+        for data_dir in "data_new/analogy_dataset/split_middle_overlap_dedup/" "data_new/analogy_dataset/split_middle_overlap_dedup_popu/" "data_new/analogy_dataset/split_middle_overlap_dedup_popu_withtest/"
         do
             echo "======="
             echo ${method} ${emb} ${data_dir}
@@ -17,7 +19,7 @@ do
             python run_emb.py \
                 --dataset_dir ${data_dir} \
                 --split test.prop \
-                --subprop_file data_new/property_occurrence_prop435k_split/subprops_hard \
+                --subprop_file ${subprop_file} \
                 --emb_file ${emb} \
                 --method ${method} \
                 --num_workers 8 \

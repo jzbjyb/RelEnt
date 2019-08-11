@@ -12,6 +12,7 @@ from copy import deepcopy
 from random import shuffle
 from pathlib import Path
 import multiprocessing
+import string
 
 from .load_sling_documents import load, get_mentions
 from .util import load_tsv_as_dict
@@ -536,6 +537,9 @@ class WikipediaDataset(TextualDataset):
 
 
 class SlingDataset():
+    #PUNCT = set(list(string.punctuation))
+    PUNCT = set(list('!.?'))  # TODO: better sentence detection
+
     def __init__(self, record_dir: str = None):
         self.record_dir = record_dir
 
@@ -649,6 +653,128 @@ class SlingDataset():
                 pickle.dump(vocab, fout)
         else:
             return sid2sent, entity2sid, vocab
+
+
+    @staticmethod
+    def sentencize(tokens: List[str]):
+        tid2sid: Dict[str, int] = {}
+        sid2boundary: Dict[str, Tuple[int, int]] = {}  # (inclusive, exclusive)
+        sid = 0
+        prev_boundary = 0
+        closed = True
+        for i, t in enumerate(tokens):
+            tid2sid[i] = sid
+            closed = False
+            if t in SlingDataset.PUNCT:
+                sid2boundary[sid] = (prev_boundary, i + 1)
+                sid += 1
+                prev_boundary = i + 1
+                closed = True
+        if not closed:
+            sid2boundary[sid] = (prev_boundary, i + 1)
+        return tid2sid, sid2boundary
+
+
+    def extract_entity_occ(self,
+                           ht2pid: Dict[Tuple[str, str], str],
+                           max_num_sent: int = None,
+                           max_sent_len: int = None,
+                           dump_dir: str = False,
+                           dist_thres: int = None,
+                           record_files: str = None):
+        all_wdids = set()
+        for h, t in ht2pid.keys():
+            all_wdids.add(h)
+            all_wdids.add(t)
+
+        pid2file: Dict = {}
+        def get_file(pid):
+            if pid not in pid2file:
+                pid2file[pid] = open(os.path.join(dump_dir, '{}.txt'.format(pid)), 'w')
+            return pid2file[pid]
+
+        def get_sent(sid: int,
+                     tokens: List[str],
+                     sid2boundary: Dict[int, Tuple[int, int]],
+                     sid2sent: Dict[int, List[str]]):
+            if sid not in sid2sent:
+                s, e = sid2boundary[sid]
+                sid2sent[sid] = ' '.join(map(lambda w: w.replace(' ', '_'), tokens[s:e]))
+            return sid2sent[sid]
+
+        # iterate over all mentions
+        if record_files:
+            record_files = [record_files]
+        else:
+            record_dir = Path(self.record_dir)
+            record_files = record_dir.glob('*.rec')
+        print('--> {}'.format(record_files))
+
+        pid2sentcount = defaultdict(lambda: 0)
+        for rec_file in record_files:
+            rec_file = str(rec_file)
+            print('loading {}'.format(rec_file))
+            for i, (doc, (wpid, _, _)) in tqdm(enumerate(load(rec_file, load_tokens=True, load_mentions=True))):
+
+                # split into sentences
+                tokens = doc.tokens
+                tid2sid, sid2boundary = SlingDataset.sentencize(tokens)
+
+                # iterate over mentions
+                previous_mentions = []
+                sid2sent: Dict[int, List] = {}
+                for mention in get_mentions(doc):
+                    start, end, wdid = mention
+                    if wdid not in all_wdids:
+                        continue
+
+                    # iterate over adjacent previous mentions
+                    for j in range(1, 6):
+                        if len(previous_mentions) < j:
+                            break
+                        start_p, end_p, wdid_p = previous_mentions[-j]
+                        if start < end_p:  # overlap
+                            continue
+                        if dist_thres and start - end_p > dist_thres:  # too distant
+                            break
+                        sids = np.array([tid2sid[start], tid2sid[end - 1], tid2sid[start_p], tid2sid[end_p - 1]])
+                        sid = sids[0]
+                        if np.any(sids != sid):  # not in the same sentence
+                            break
+
+                        # save
+                        sent_start, sent_end = sid2boundary[sid]
+                        if max_sent_len and sent_end - sent_start >= max_sent_len:  # sentence too long
+                            continue
+
+                        if (wdid_p, wdid) in ht2pid:
+                            pid = ht2pid[(wdid_p, wdid)]
+                            if max_num_sent and pid2sentcount[pid] >= max_num_sent:
+                                break
+                            pid2sentcount[pid] += 1
+                            sent = get_sent(sid, tokens, sid2boundary, sid2sent)
+                            get_file(pid).write('{}\t{}\t{}\t{}\t{}\n'.format(
+                                wdid_p, wdid,
+                                '{}:{}'.format(start_p - sent_start, end_p - sent_start),
+                                '{}:{}'.format(start - sent_start, end - sent_start),
+                                sent))
+                        elif (wdid, wdid_p) in ht2pid:
+                            pid = ht2pid[(wdid, wdid_p)]
+                            if max_num_sent and pid2sentcount[pid] >= max_num_sent:
+                                break
+                            pid2sentcount[pid] += 1
+                            sent = get_sent(sid, tokens, sid2boundary, sid2sent)
+                            get_file(pid).write('{}\t{}\t{}\t{}\t{}\n'.format(
+                                wdid, wdid_p,
+                                '{}:{}'.format(start - sent_start, end - sent_start),
+                                '{}:{}'.format(start_p - sent_start, end_p - sent_start),
+                                sent))
+
+                    previous_mentions.append(mention)
+
+        # close files
+        for pid, file in pid2file.items():
+            file.close()
 
 
     def build_entity2sent_onepass(self,

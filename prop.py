@@ -856,6 +856,32 @@ def link_entity_to_wikipedia_by_sling(args, max_num_sent):
     sling_dataset.build_entity2sent_onepass(wikidata_ids=wikidata_ids, dump_dir=args.out)
 
 
+def get_entity_occ_by_sling(args, max_num_sent, dist_thres, max_sent_len):
+    subprops, prop_occ_dir, sling_record_dir, sling_record_file = args.inp.split(':')
+
+    subprops = read_subprop_file(subprops)
+    all_pids = [p[0][0] for p in subprops]
+
+    # load property occurrences
+    poccs = PropertyOccurrence.build(sorted(all_pids), prop_occ_dir)
+    print('totally {} pids with occs'.format(len(poccs.pid2occs)))
+
+    # build <hid, tid> to pid mapping:
+    ht2pid: Dict[Tuple[str, str], str] = {}
+    for pid, occs in poccs.pid2occs.items():
+        for hid, tid in occs:
+            ht2pid[(hid, tid)] = pid
+
+    print('extract ...')
+    sling_dataset = SlingDataset(record_dir=sling_record_dir)
+    sling_dataset.extract_entity_occ(ht2pid=ht2pid,
+                                     max_num_sent=max_num_sent,
+                                     max_sent_len=max_sent_len,
+                                     dump_dir=args.out,
+                                     dist_thres=dist_thres,
+                                     record_files=os.path.join(sling_record_dir, sling_record_file))
+
+
 def wikidata_contained_by_sling(args):
     triple_file, mention_popu_file = args.inp.split(':')
     # triple_file = 'data_new/split_merge_triples/property_occurrence_prop435k_split.tsv'
@@ -1149,7 +1175,8 @@ if __name__ == '__main__':
                                  'wikidata_contained_by_sling',
                                  'get_sling_tokens', 'filter_sling_tokens',
                                  'property_level_bow_sling_on_alldocs',
-                                 'remove_dup_between_child_ancestor'], required=True)
+                                 'remove_dup_between_child_ancestor',
+                                 'get_entity_occ_by_sling'], required=True)
     parser.add_argument('--inp', type=str, required=None)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -1230,6 +1257,8 @@ if __name__ == '__main__':
         link_entity_to_wikipedia(args, max_num_sent=1000)
     elif args.task == 'link_entity_to_wikipedia_by_sling':
         link_entity_to_wikipedia_by_sling(args, max_num_sent=10000)
+    elif args.task == 'get_entity_occ_by_sling':
+        get_entity_occ_by_sling(args, max_num_sent=None, dist_thres=100, max_sent_len=200)
     elif args.task == 'get_wikidata_item_popularity_by_sling':
         get_wikidata_item_popularity_by_sling(args)
     elif args.task == 'wikidata_contained_by_sling':

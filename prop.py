@@ -12,13 +12,14 @@ from copy import deepcopy
 import shutil
 import pickle
 from operator import itemgetter
+import spacy
 from sklearn.metrics.pairwise import cosine_similarity
 from wikiutil.property import get_sub_properties, read_subprop_file, get_all_subtree, \
     hiro_subgraph_to_tree_dict, tree_dict_to_adj, read_prop_occ_file, PropertyOccurrence, read_subgraph_file, \
     read_prop_occ_file_from_dir, property_split, get_pid2plabel, filter_bow, get_is_ancestor
 from wikiutil.util import read_emb_ids, load_tsv_as_dict, load_tsv_as_list, read_embeddings_from_text_file
 from wikiutil.wikidata_query_service import get_property_occurrence
-from wikiutil.textual_relation import WikipediaDataset, SlingDataset
+from wikiutil.textual_relation import WikipediaDataset, SlingDataset, CharTokenizer, get_dep_path
 
 def subprop(args):
     all_props = []
@@ -882,6 +883,53 @@ def get_entity_occ_by_sling(args, max_num_sent, dist_thres, max_sent_len):
                                      record_files=os.path.join(sling_record_dir, sling_record_file))
 
 
+def get_entity_occ_dep_by_sling(args, first=None):
+    nlp = spacy.load('en_core_web_sm')
+    nlp.tokenizer = CharTokenizer(nlp.vocab, char=' ')
+
+    for root, dirs, files in os.walk(args.inp):
+        for file in tqdm(files):
+            if not file.endswith('.txt'):
+                continue
+            from_file = os.path.join(root, file)
+            to_file = os.path.join(args.out, file)
+            doc_li: List[str] = []
+            hpos_li: List[set] = []
+            tpos_li: List[set] = []
+            hid_li: List[str] = []
+            tid_li: List[str] = []
+            print('load {}'.format(from_file))
+            with open(from_file, 'r') as fin:
+                for l in fin:
+                    l = l.strip()
+                    if l == '':
+                        continue
+                    hid, tid, hpos, tpos, tokens = l.split('\t')
+                    hs, he = list(map(int, hpos.split(':')))
+                    ts, te = list(map(int, tpos.split(':')))
+                    doc_li.append(tokens)
+                    hpos_li.append(set(p for p in range(hs, he)))
+                    tpos_li.append(set(p for p in range(ts, te)))
+                    hid_li.append(hid)
+                    tid_li.append(tid)
+
+            if first:
+                doc_li, hpos_li, tpos_li, hid_li, tid_li = \
+                    doc_li[:first], hpos_li[:first], tpos_li[:first], hid_li[:first], tid_li[:first]
+
+            print('write {}'.format(to_file))
+            with open(to_file, 'w') as fout:
+                doc_li = nlp.pipe(doc_li)
+                for doc, hpos, tpos, hid, tid in zip(doc_li, hpos_li, tpos_li, hid_li, tid_li):
+                    dep_path = get_dep_path(doc, hpos, tpos)
+                    #print(hid, hpos, tid, tpos)
+                    #print(doc)
+                    #print(dep_path)
+                    #print()
+                    #input()
+                    fout.write('{}\t{}\t{}\n'.format(hid, tid, ' '.join(dep_path)))
+
+
 def wikidata_contained_by_sling(args):
     triple_file, mention_popu_file = args.inp.split(':')
     # triple_file = 'data_new/split_merge_triples/property_occurrence_prop435k_split.tsv'
@@ -1176,7 +1224,8 @@ if __name__ == '__main__':
                                  'get_sling_tokens', 'filter_sling_tokens',
                                  'property_level_bow_sling_on_alldocs',
                                  'remove_dup_between_child_ancestor',
-                                 'get_entity_occ_by_sling'], required=True)
+                                 'get_entity_occ_by_sling',
+                                 'get_entity_occ_dep_by_sling'], required=True)
     parser.add_argument('--inp', type=str, required=None)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -1259,6 +1308,8 @@ if __name__ == '__main__':
         link_entity_to_wikipedia_by_sling(args, max_num_sent=10000)
     elif args.task == 'get_entity_occ_by_sling':
         get_entity_occ_by_sling(args, max_num_sent=None, dist_thres=100, max_sent_len=200)
+    elif args.task == 'get_entity_occ_dep_by_sling':
+        get_entity_occ_dep_by_sling(args, first=5000)
     elif args.task == 'get_wikidata_item_popularity_by_sling':
         get_wikidata_item_popularity_by_sling(args)
     elif args.task == 'wikidata_contained_by_sling':

@@ -4,8 +4,8 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data_new/analogy_dataset/split_middle_dedup_by_entail_nway_subgraph10_sample5_parent_occ_popu
-load_split=data_new/analogy_dataset/split_middle_overlap_dedup
+data_dir=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph10_sample5_parent_occ_popu
+load_split=data_new/analogy_dataset/split_middle_overlap_dedup_nocommonchild
 data_format=n_way
 subgraph_file=data_new/subgraph/property_occurrence_prop435k_split_dedup.subgraph
 prop_dir=data_new/property_occurrence_prop435k_split_dedup

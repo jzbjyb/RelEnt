@@ -4,8 +4,8 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data_new/analogy_dataset/split_middle_overlap_dedup_popu
-load_split=data_new/analogy_dataset/split_middle_overlap_dedup
+data_dir=data_new/analogy_dataset/split_middle_overlap_dedup_nocommonchild_popu
+load_split=data_new/analogy_dataset/split_middle_overlap_dedup_nocommonchild
 data_format=n_way
 subgraph_file=data_new/subgraph/property_occurrence_prop435k_split_dedup.subgraph
 prop_dir=data_new/property_occurrence_prop435k_split_dedup
@@ -30,6 +30,7 @@ python prep_data.py \
     --num_sample 5 \
     --contain_train \
     --allow_empty_split \
+    --remove_common_child \
     --load_split ${load_split} \
     --property_population \
     --filter_test

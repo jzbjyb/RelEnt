@@ -5,7 +5,7 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-dataset_dir=data_new/analogy_dataset/split_middle_dedup_by_entail_nway_subgraph10_sample5_parent_occ_popu/
+dataset_dir=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph10_sample5_parent_occ_popu/
 subprop_file=data_new/property_occurrence_prop435k_split_dedup/subprops_random
 emb_file=../pytorch_big_graph/emb_new_dedup/transe.txt
 #word_emb_file='data/emb/glove.6B.50d.txt'

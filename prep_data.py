@@ -10,7 +10,8 @@ from itertools import combinations, product
 from tqdm import tqdm
 import numpy as np
 from wikiutil.property import read_subprop_file, get_all_subtree, \
-    get_is_sibling, read_subgraph_file, get_is_parent, PropertyOccurrence, get_is_ancestor, get_pid2plabel
+    get_is_sibling, read_subgraph_file, get_is_parent, PropertyOccurrence, get_is_ancestor, get_pid2plabel, \
+    remove_common_child
 from wikiutil.util import read_emb_ids, save_emb_ids, DefaultOrderedDict, load_tsv_as_list, load_tsv_as_dict
 
 
@@ -48,6 +49,7 @@ if __name__ == '__main__':
     parser.add_argument('--allow_empty_split', action='store_true',
                         help='whether empty split is allowed. used in within_tree and by_entail and by_entail-n_way')
     parser.add_argument('--filter_test', action='store_true', help='whether to remove test pid before population')
+    parser.add_argument('--remove_common_child', action='store_true', help='keep the deepest child')
     args = parser.parse_args()
 
     random.seed(2019)
@@ -61,6 +63,11 @@ if __name__ == '__main__':
         entityid2name = None
     pid2plabel = get_pid2plabel(subprops, entityid2name=entityid2name)
     subtrees, isolate = get_all_subtree(subprops)
+
+    if args.remove_common_child:
+        print('remove common child')
+        remove_common_child(subtrees)
+
     subtree_pids = set()  # only consider properties in subtrees
     [subtree_pids.add(pid) for subtree in subtrees for pid in subtree.traverse()]
 

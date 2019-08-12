@@ -36,7 +36,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--only_one_sample_per_prop', action='store_true')
     parser.add_argument('--filter_labels', action='store_true')
-    parser.add_argument('--use_gnn', action='store_true')
+    parser.add_argument('--use_gnn', type=str, default='gcn1_diag')
 
     args = parser.parse_args()
 

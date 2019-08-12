@@ -287,7 +287,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                   use_tbow=0, use_tbow2=0, tbow_emb_size=50, tbow_emb_size2=50, word_emb_file=None,
                   word_emb_file2=None, suffix='.tbow', suffix2='.tbow', only_tbow=False,
                   renew_word_emb=False, output_pred=False, use_ancestor=False, filter_labels=False,
-                  acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam', use_gnn=False):
+                  acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam', use_gnn=None):
     subprops = read_subprop_file(subprop_file)
     pid2plabel = get_pid2plabel(subprops)
     subtrees, _ = get_all_subtree(subprops)
@@ -452,7 +452,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         graph_data = dict((k, v.to(device)) for k, v in graph_data.items())
 
         emb_model = EmbGnnModel(feat_size=input_size, hidden_size=hidden_size,
-                                num_class=len(label2ind), dropout=dropout, method='gcn1_diag')
+                                num_class=len(label2ind), dropout=dropout, method=use_gnn)
         emb_model.to(device)
 
         optimizer = torch.optim.RMSprop(emb_model.parameters(), lr=lr)

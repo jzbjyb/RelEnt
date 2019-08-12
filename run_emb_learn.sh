@@ -43,6 +43,6 @@ do
             --seed ${seed} \
             --only_one_sample_per_prop \
             --filter_labels \
-            --use_gnn
+            --use_gnn 'gcn1_diag'
     done
 done

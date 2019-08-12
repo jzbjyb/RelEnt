@@ -452,7 +452,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         graph_data = dict((k, v.to(device)) for k, v in graph_data.items())
 
         emb_model = EmbGnnModel(feat_size=input_size, hidden_size=hidden_size,
-                                num_class=len(label2ind), dropout=dropout, method='gnn1')
+                                num_class=len(label2ind), dropout=dropout, method='gcn1_diag')
         emb_model.to(device)
 
         optimizer = torch.optim.RMSprop(emb_model.parameters(), lr=lr)

@@ -3,7 +3,7 @@ from collections import defaultdict
 import numpy as np
 import torch
 import torch.nn as nn
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, GATConv
 from itertools import combinations
 
 from wikiutil.property import PropertySubtree, read_subprop_file, get_all_subtree
@@ -11,19 +11,23 @@ from .gcn import MyGCNConv
 
 
 class EmbGnnModel(nn.Module):
-    def __init__(self, feat_size, hidden_size, num_class, dropout=0.0, method='gnn1'):
+    def __init__(self, feat_size, hidden_size, num_class, dropout=0.0, method='gcn1_diag'):
         super(EmbGnnModel, self).__init__()
         self.num_class = num_class
-        assert method in {'gnn1', 'gnn2'}
+        assert method in {'none', 'gcn1_diag', 'gcn1', 'gcn2', 'gat1'}
         self.method = method
-        self.gnn1 = MyGCNConv(feat_size, feat_size, improved=False, learnable=True)
+        if method == 'gcn1_diag':
+            self.gcn1 = MyGCNConv(feat_size, feat_size, improved=False, learnable=True)
+        elif method == 'gcn1':
+            self.gcn1 = GCNConv(feat_size, feat_size, improved=False)
+        self.gat1 = GATConv(feat_size, feat_size)
         self.ff = nn.Sequential(
             nn.Dropout(p=dropout),
             nn.Linear(feat_size, hidden_size),
             nn.ReLU(),
             nn.Dropout(p=dropout)
         )
-        self.gnn2 = GCNConv(hidden_size, hidden_size, improved=False)
+        self.gcn2 = GCNConv(hidden_size, hidden_size, improved=False)
         self.pred_ff = nn.Linear(hidden_size, num_class)
 
 
@@ -34,11 +38,13 @@ class EmbGnnModel(nn.Module):
                 train_mask: torch.LongTensor,  # SHAPE: (num_nodes,)
                 dev_mask: torch.LongTensor,  # SHAPE: (num_nodes,)
                 test_mask: torch.LongTensor):  # SHAPE: (num_nodes,)
-        if self.method == 'gnn1':
-            feature = self.gnn1(feature, adj)
+        if self.method == 'gcn1' or self.method == 'gcn1_diag':
+            feature = self.gcn1(feature, adj)
+        elif self.method == 'gat1':
+            feature = self.gat1(feature, adj)
         pred_repr = self.ff(feature)
-        if self.method == 'gnn2':
-            pred_repr = self.gnn2(pred_repr, adj)
+        if self.method == 'gcn2':
+            pred_repr = self.gcn2(pred_repr, adj)
 
         # SHAPE: (num_nodes, num_class)
         logits = self.pred_ff(pred_repr)

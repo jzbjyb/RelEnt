@@ -20,7 +20,7 @@ class EmbGnnModel(nn.Module):
             self.gcn1 = MyGCNConv(feat_size, feat_size, improved=False, learnable=True)
         elif method == 'gcn1':
             self.gcn1 = GCNConv(feat_size, feat_size, improved=False)
-        self.gat1 = GATConv(feat_size, feat_size)
+        self.gat1 = GATConv(feat_size, feat_size, dropout=0.7)
         self.ff = nn.Sequential(
             nn.Dropout(p=dropout),
             nn.Linear(feat_size, hidden_size),

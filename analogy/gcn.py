@@ -41,6 +41,7 @@ class MyGCNConv(MessagePassing):
                  improved=False,
                  cached=False,
                  bias=True,
+                 learnable=True,
                  **kwargs):
         super(MyGCNConv, self).__init__(aggr='add', **kwargs)
 
@@ -51,11 +52,11 @@ class MyGCNConv(MessagePassing):
         self.cached_result = None
 
         #self.weight = Parameter(torch.Tensor(in_channels, out_channels))
-        self.weight = Parameter(torch.eye(in_channels), requires_grad=False)  # TODO debug
+        self.weight = Parameter(torch.ones(in_channels), requires_grad=learnable)
 
         if bias:
             #self.bias = Parameter(torch.Tensor(out_channels))
-            self.bias = Parameter(torch.zeros(out_channels), requires_grad=False)  # TODO debug
+            self.bias = Parameter(torch.zeros(out_channels), requires_grad=learnable)
         else:
             self.register_parameter('bias', None)
 
@@ -87,7 +88,8 @@ class MyGCNConv(MessagePassing):
 
     def forward(self, x, edge_index, edge_weight=None):
         """"""
-        x = torch.matmul(x, self.weight)
+        #x = torch.matmul(x, self.weight)
+        x = x * self.weight.unsqueeze(0)
 
         if self.cached and self.cached_result is not None:
             if edge_index.size(1) != self.cached_num_edges:

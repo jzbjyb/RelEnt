@@ -11,16 +11,19 @@ from .gcn import MyGCNConv
 
 
 class EmbGnnModel(nn.Module):
-    def __init__(self, feat_size, hidden_size, num_class, dropout=0.0):
+    def __init__(self, feat_size, hidden_size, num_class, dropout=0.0, method='gnn1'):
         super(EmbGnnModel, self).__init__()
         self.num_class = num_class
-        self.gnn = MyGCNConv(feat_size, feat_size, improved=False)
+        assert method in {'gnn1', 'gnn2'}
+        self.method = method
+        self.gnn1 = MyGCNConv(feat_size, feat_size, improved=False, learnable=True)
         self.ff = nn.Sequential(
             nn.Dropout(p=dropout),
             nn.Linear(feat_size, hidden_size),
             nn.ReLU(),
             nn.Dropout(p=dropout)
         )
+        self.gnn2 = GCNConv(hidden_size, hidden_size, improved=False)
         self.pred_ff = nn.Linear(hidden_size, num_class)
 
 
@@ -31,9 +34,11 @@ class EmbGnnModel(nn.Module):
                 train_mask: torch.LongTensor,  # SHAPE: (num_nodes,)
                 dev_mask: torch.LongTensor,  # SHAPE: (num_nodes,)
                 test_mask: torch.LongTensor):  # SHAPE: (num_nodes,)
-
-        gnn_feat = self.gnn(feature, adj)
-        pred_repr = self.ff(gnn_feat)
+        if self.method == 'gnn1':
+            feature = self.gnn1(feature, adj)
+        pred_repr = self.ff(feature)
+        if self.method == 'gnn2':
+            pred_repr = self.gnn2(pred_repr, adj)
 
         # SHAPE: (num_nodes, num_class)
         logits = self.pred_ff(pred_repr)

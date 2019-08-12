@@ -364,7 +364,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
             if renew_word_emb:
                 word_emb = None
         else:
-            vocab_size = len(load_tsv_as_dict(os.path.join(data_dir, 'tbow.vocab')))
+            vocab_size = len(load_tsv_as_dict(os.path.join(data_dir, '{}.vocab'.format(suffix.lstrip('.')))))
 
         if use_tbow2:
             if word_emb_file2:
@@ -374,7 +374,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                 if renew_word_emb:
                     word_emb2 = None
             else:
-                vocab_size2 = len(load_tsv_as_dict(os.path.join(data_dir, 'tbow2.vocab')))
+                vocab_size2 = len(load_tsv_as_dict(os.path.join(data_dir, '{}.vocab'.format(suffix2.lstrip('.')))))
 
         print('vocab size 1 {}'.format(vocab_size))
         print('vocab size 2 {}'.format(vocab_size2))

@@ -76,12 +76,12 @@ class EmbModel(nn.Module):
 
             if sent_emb_method == 'rnn':
                 self.num_rnn_layer = 1
-                self.num_rnn_direction = 1
-                self.rnn_hidden_size = 64  # TODO: add param
+                self.num_rnn_direction = 2
+                self.rnn_hidden_size = 32  # TODO: add param
                 self.rnn = nn.LSTM(sent_emb_size, self.rnn_hidden_size,
                                    num_layers=self.num_rnn_layer, bidirectional=self.num_rnn_direction == 2,
                                    batch_first=True)
-                input_size += self.rnn_hidden_size
+                input_size += self.num_rnn_direction * self.rnn_hidden_size
             elif sent_emb_method == 'cnn_max' or sent_emb_method == 'cnn_mean':
                 self.out_channel = 50  # TODO: add param
                 self.kernel_size = 3
@@ -169,8 +169,10 @@ class EmbModel(nn.Module):
 
             # SHAPE: (layer, dire, batch_size * num_sent, hidden_size)
             last_h = last_h.view(self.num_rnn_layer, self.num_rnn_direction, bs * ns, -1)
-            # SHAPE: (batch_size, num_sent, hidden_size)
-            last_h = last_h[-1][0].view(bs, ns, self.rnn_hidden_size)
+            # SHAPE: (dire, batch_size, num_sent, hidden_size)
+            last_h = last_h[-1].view(self.num_rnn_direction, bs, ns, self.rnn_hidden_size)
+            # SHAPE: (batch_size, num_sent, dire * hidden_size)
+            last_h = last_h.permute(1, 2, 0, 3).contiguous().view(bs, ns, self.num_rnn_direction * self.rnn_hidden_size)
             sent_emb = last_h * sent_mask.view(bs, ns, 1)  # mask out empty sent
 
         elif self.sent_emb_method.startswith('cnn_'):

@@ -24,8 +24,8 @@ word_emb_size2=50
 suffix2='.tbow'
 
 sent_emb_size=50
-sent_emb_file=${dataset_dir}/emb/dep_sent.txt
-sent_suffix='.dep_sent'
+sent_emb_file=${dataset_dir}/emb/dep_sent_lower.txt
+sent_suffix='.dep_sent_lower'
 
 for seed in 0 1 2 3 4 2019 1000 256 77 9541
 do
@@ -48,6 +48,6 @@ do
             --seed ${seed} \
             --only_one_sample_per_prop \
             --filter_labels \
-            --sent_emb_method rnn-cnn_mean
+            --sent_emb_method avg
     done
 done

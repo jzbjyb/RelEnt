@@ -79,7 +79,7 @@ class EmbModel(nn.Module):
                 self.num_rnn_direction = 1
                 self.rnn_hidden_size = 64  # TODO: add param
                 self.rnn = nn.LSTM(sent_emb_size, self.rnn_hidden_size,
-                                   self.num_rnn_layer, bidirectional=self.num_rnn_direction == 2,
+                                   num_layers=self.num_rnn_layer, bidirectional=self.num_rnn_direction == 2,
                                    batch_first=True)
                 input_size += self.rnn_hidden_size
             elif sent_emb_method == 'cnn_max' or sent_emb_method == 'cnn_mean':
@@ -154,8 +154,8 @@ class EmbModel(nn.Module):
         # SHAPE: (batch_size * num_sent, num_words, 1)
         token_mask = sent_ind.ne(self.padding_idx).float().unsqueeze(-1)
         # SHAPE: (batch_size * num_sent)
-        sent_len = token_mask.sum(-1)
-        sent_mask = sent_len.eq(0).long()
+        sent_len = token_mask.squeeze(-1).sum(-1)
+        sent_mask = sent_len.ne(0).float()
         # some sent is empty, pretend there is one token
         sent_len = torch.clamp(sent_len, min=1)
 
@@ -168,10 +168,10 @@ class EmbModel(nn.Module):
             #output, _ = pad_packed_sequence(output, batch_first=True)
 
             # SHAPE: (layer, dire, batch_size * num_sent, hidden_size)
-            last_h = last_h.view(self.num_rnn_layer, self.num_rnn_direction, -1, self.rnn_hidden_size)
+            last_h = last_h.view(self.num_rnn_layer, self.num_rnn_direction, bs * ns, -1)
             # SHAPE: (batch_size, num_sent, hidden_size)
             last_h = last_h[-1][0].view(bs, ns, self.rnn_hidden_size)
-            sent_emb = last_h * sent_mask.view(bs, ns, 1).float()  # mask out empty sent
+            sent_emb = last_h * sent_mask.view(bs, ns, 1)  # mask out empty sent
 
         elif self.sent_emb_method.startswith('cnn_'):
             # SHAPE: (batch_size * num_sent, emb_size, num_words)

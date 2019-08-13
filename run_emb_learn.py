@@ -43,7 +43,7 @@ if __name__ == '__main__':
     parser.add_argument('--only_one_sample_per_prop', action='store_true')
     parser.add_argument('--filter_labels', action='store_true')
     parser.add_argument('--use_gnn', type=str, default=None)
-    parser.add_argument('--sent_emb_method', type=str, default='cnn')
+    parser.add_argument('--sent_emb_method', type=str, default='cnn_mean')
 
     args = parser.parse_args()
 

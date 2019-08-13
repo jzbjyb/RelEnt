@@ -34,7 +34,7 @@ class EmbModel(nn.Module):
         if only_prop:
             input_size //= 2
         self.use_label = use_label
-        assert sent_emb_method in {'avg', 'rnn', 'cnn'}
+        assert sent_emb_method in {'avg', 'rnn', 'cnn_max', 'cnn_mean'}
         self.sent_emb_method = sent_emb_method
 
         if vocab_size:
@@ -82,7 +82,7 @@ class EmbModel(nn.Module):
                                    self.num_rnn_layer, bidirectional=self.num_rnn_direction == 2,
                                    batch_first=True)
                 input_size += self.rnn_hidden_size
-            elif sent_emb_method == 'cnn':
+            elif sent_emb_method == 'cnn_max' or sent_emb_method == 'cnn_mean':
                 self.out_channel = 50  # TODO: add param
                 self.kernel_size = 3
                 padding = (self.kernel_size - 1) // 2
@@ -151,8 +151,8 @@ class EmbModel(nn.Module):
         bs, ns, nw = sent_ind.size()
         # SHAPE: (batch_size * num_sent, num_words)
         sent_ind = sent_ind.view(-1, nw)
-        # SHAPE: (batch_size * num_sent, num_words)
-        token_mask = sent_ind.ne(self.padding_idx).float()
+        # SHAPE: (batch_size * num_sent, num_words, 1)
+        token_mask = sent_ind.ne(self.padding_idx).float().unsqueeze(-1)
         # SHAPE: (batch_size * num_sent)
         sent_len = token_mask.sum(-1)
         sent_mask = sent_len.eq(0).long()
@@ -173,19 +173,20 @@ class EmbModel(nn.Module):
             last_h = last_h[-1][0].view(bs, ns, self.rnn_hidden_size)
             sent_emb = last_h * sent_mask.view(bs, ns, 1).float()  # mask out empty sent
 
-        elif self.sent_emb_method == 'cnn':
+        elif self.sent_emb_method.startswith('cnn_'):
             # SHAPE: (batch_size * num_sent, emb_size, num_words)
             sent_emb = sent_emb.permute(0, 2, 1)
             # SHAPE: (batch_size * num_sent, num_words, out_channel)
             sent_emb = self.conv(sent_emb).permute(0, 2, 1)
-            sent_emb = sent_emb - (1 - token_mask).unsqueeze(-1) * 1e+10
-            # SHAPE: (batch_size * num_sent, out_channel)
-            sent_emb = sent_emb.max(1)[0].view(bs, ns, -1)
+            if self.sent_emb_method == 'cnn_max':
+                sent_emb = sent_emb - (1 - token_mask) * 1e+10
+                sent_emb = sent_emb.max(1)[0]
+            elif self.sent_emb_method == 'cnn_mean':
+                sent_emb = (sent_emb * token_mask).sum(1) / (token_mask.sum(1) + 1e-10)
+            sent_emb = sent_emb.view(bs, ns, -1)
 
         elif self.sent_emb_method == 'avg':
-            token_mask = token_mask.unsqueeze(-1)
             sent_emb = (sent_emb * token_mask).sum(1) / (token_mask.sum(1) + 1e-10)
-            # SHAPE: (batch_size, num_sent, emb_size)
             sent_emb = sent_emb.view(bs, ns, -1)
 
         # sum across sentences
@@ -400,7 +401,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                   use_sent=0, sent_emb_size=50, sent_emb_file=None, sent_suffix='.sent',  # sent
                   only_tbow=False, renew_word_emb=False, output_pred=False, use_ancestor=False, filter_labels=False,
                   acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam', use_gnn=None,
-                  sent_emb_method='cnn'):
+                  sent_emb_method='cnn_mean'):
     subprops = read_subprop_file(subprop_file)
     pid2plabel = get_pid2plabel(subprops)
     subtrees, _ = get_all_subtree(subprops)

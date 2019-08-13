@@ -324,7 +324,7 @@ def data2tensor(batch, emb_id2ind, only_prop=False, num_occs=10, device=None,
 
     tbow_ind = tbow_count = None
     tbow_ind2 = tbow_count2 = None
-    sent_ind = sent_count = None,
+    sent_ind = sent_count = None
     if use_tbow:
         tbow_ind, tbow_count = get_tbow_ind(tbow_batch, max_num=use_tbow)
         tbow_ind = tbow_ind.to(device)

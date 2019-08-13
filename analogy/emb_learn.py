@@ -34,7 +34,12 @@ class EmbModel(nn.Module):
         if only_prop:
             input_size //= 2
         self.use_label = use_label
-        assert sent_emb_method in {'avg', 'rnn', 'cnn_max', 'cnn_mean'}
+        if sent_emb_method.find('-') != -1:
+            sent_emb_method = sent_emb_method.split('-')
+        else:
+            sent_emb_method = [sent_emb_method]
+        for sem in sent_emb_method:
+            assert sem in {'avg', 'rnn', 'cnn_max', 'cnn_mean'}
         self.sent_emb_method = sent_emb_method
 
         if vocab_size:
@@ -74,22 +79,23 @@ class EmbModel(nn.Module):
             else:
                 self.sent_emb = nn.Embedding(sent_vocab_size, sent_emb_size, padding_idx=padding_idx)
 
-            if sent_emb_method == 'rnn':
-                self.num_rnn_layer = 1
-                self.num_rnn_direction = 2
-                self.rnn_hidden_size = 32  # TODO: add param
-                self.rnn = nn.LSTM(sent_emb_size, self.rnn_hidden_size,
-                                   num_layers=self.num_rnn_layer, bidirectional=self.num_rnn_direction == 2,
-                                   batch_first=True)
-                input_size += self.num_rnn_direction * self.rnn_hidden_size
-            elif sent_emb_method == 'cnn_max' or sent_emb_method == 'cnn_mean':
-                self.out_channel = 50  # TODO: add param
-                self.kernel_size = 3
-                padding = (self.kernel_size - 1) // 2
-                self.conv = nn.Conv1d(sent_emb_size, self.out_channel, self.kernel_size, stride=1, padding=padding)
-                input_size += self.out_channel
-            elif sent_emb_method == 'avg':
-                input_size += sent_emb_size
+            for sem in sent_emb_method:
+                if sem == 'rnn':
+                    self.num_rnn_layer = 1
+                    self.num_rnn_direction = 2
+                    self.rnn_hidden_size = 32  # TODO: add param
+                    self.rnn = nn.LSTM(sent_emb_size, self.rnn_hidden_size,
+                                       num_layers=self.num_rnn_layer, bidirectional=self.num_rnn_direction == 2,
+                                       batch_first=True)
+                    input_size += self.num_rnn_direction * self.rnn_hidden_size
+                elif sem == 'cnn_max' or sem == 'cnn_mean':
+                    self.out_channel = 50  # TODO: add param
+                    self.kernel_size = 1
+                    padding = (self.kernel_size - 1) // 2
+                    self.conv = nn.Conv1d(sent_emb_size, self.out_channel, self.kernel_size, stride=1, padding=padding)
+                    input_size += self.out_channel
+                elif sem == 'avg':
+                    input_size += sent_emb_size
 
         if use_label:
             self.ff = nn.Sequential(
@@ -160,36 +166,43 @@ class EmbModel(nn.Module):
         sent_len = torch.clamp(sent_len, min=1)
 
         # SHAPE: (batch_size * num_sent, num_words, emb_size)
-        sent_emb = lookup(sent_ind)
+        sent_emb_inp = lookup(sent_ind)
 
-        if self.sent_emb_method == 'rnn':
-            packed_sent_emb = pack_padded_sequence(sent_emb, sent_len, batch_first=True, enforce_sorted=False)
-            output, (last_h, last_c) = self.rnn(packed_sent_emb)
-            #output, _ = pad_packed_sequence(output, batch_first=True)
+        sem_li = []
+        for sem in self.sent_emb_method:
+            if sem == 'rnn':
+                packed_sent_emb = pack_padded_sequence(sent_emb_inp, sent_len, batch_first=True, enforce_sorted=False)
+                output, (last_h, last_c) = self.rnn(packed_sent_emb)
+                #output, _ = pad_packed_sequence(output, batch_first=True)
 
-            # SHAPE: (layer, dire, batch_size * num_sent, hidden_size)
-            last_h = last_h.view(self.num_rnn_layer, self.num_rnn_direction, bs * ns, -1)
-            # SHAPE: (dire, batch_size, num_sent, hidden_size)
-            last_h = last_h[-1].view(self.num_rnn_direction, bs, ns, self.rnn_hidden_size)
-            # SHAPE: (batch_size, num_sent, dire * hidden_size)
-            last_h = last_h.permute(1, 2, 0, 3).contiguous().view(bs, ns, self.num_rnn_direction * self.rnn_hidden_size)
-            sent_emb = last_h * sent_mask.view(bs, ns, 1)  # mask out empty sent
+                # SHAPE: (layer, dire, batch_size * num_sent, hidden_size)
+                last_h = last_h.view(self.num_rnn_layer, self.num_rnn_direction, bs * ns, -1)
+                # SHAPE: (dire, batch_size, num_sent, hidden_size)
+                last_h = last_h[-1].view(self.num_rnn_direction, bs, ns, self.rnn_hidden_size)
+                # SHAPE: (batch_size, num_sent, dire * hidden_size)
+                last_h = last_h.permute(1, 2, 0, 3).contiguous().view(
+                    bs, ns, self.num_rnn_direction * self.rnn_hidden_size)
+                sent_emb = last_h * sent_mask.view(bs, ns, 1)  # mask out empty sent
 
-        elif self.sent_emb_method.startswith('cnn_'):
-            # SHAPE: (batch_size * num_sent, emb_size, num_words)
-            sent_emb = sent_emb.permute(0, 2, 1)
-            # SHAPE: (batch_size * num_sent, num_words, out_channel)
-            sent_emb = self.conv(sent_emb).permute(0, 2, 1)
-            if self.sent_emb_method == 'cnn_max':
-                sent_emb = sent_emb - (1 - token_mask) * 1e+10
-                sent_emb = sent_emb.max(1)[0]
-            elif self.sent_emb_method == 'cnn_mean':
-                sent_emb = (sent_emb * token_mask).sum(1) / (token_mask.sum(1) + 1e-10)
-            sent_emb = sent_emb.view(bs, ns, -1)
+            elif sem.startswith('cnn_'):
+                # SHAPE: (batch_size * num_sent, emb_size, num_words)
+                sent_emb = sent_emb_inp.permute(0, 2, 1)
+                # SHAPE: (batch_size * num_sent, num_words, out_channel)
+                sent_emb = self.conv(sent_emb).permute(0, 2, 1)
+                if sem == 'cnn_max':
+                    sent_emb = sent_emb - (1 - token_mask) * 1e+10
+                    sent_emb = sent_emb.max(1)[0]
+                elif sem == 'cnn_mean':
+                    sent_emb = (sent_emb * token_mask).sum(1) / (token_mask.sum(1) + 1e-10)
+                sent_emb = sent_emb.view(bs, ns, -1)
 
-        elif self.sent_emb_method == 'avg':
-            sent_emb = (sent_emb * token_mask).sum(1) / (token_mask.sum(1) + 1e-10)
-            sent_emb = sent_emb.view(bs, ns, -1)
+            elif sem == 'avg':
+                sent_emb = (sent_emb_inp * token_mask).sum(1) / (token_mask.sum(1) + 1e-10)
+                sent_emb = sent_emb.view(bs, ns, -1)
+
+            sem_li.append(sent_emb)
+
+        sent_emb = torch.cat(sem_li, -1)
 
         # sum across sentences
         sent_count = sent_count.float()

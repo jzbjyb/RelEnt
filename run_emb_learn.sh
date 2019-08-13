@@ -48,6 +48,6 @@ do
             --seed ${seed} \
             --only_one_sample_per_prop \
             --filter_labels \
-            --sent_emb_method rnn
+            --sent_emb_method rnn-cnn_mean
     done
 done

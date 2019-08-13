@@ -21,10 +21,16 @@ if __name__ == '__main__':
     parser.add_argument('--word_emb_size', type=int, default=50)
     parser.add_argument('--use_tbow', type=int, default=0)
     parser.add_argument('--suffix', type=str, default='.tbow')
+
     parser.add_argument('--word_emb_file2', type=str, default=None, help='word embedding file')
     parser.add_argument('--word_emb_size2', type=int, default=50)
     parser.add_argument('--use_tbow2', type=int, default=0)
     parser.add_argument('--suffix2', type=str, default='.tbow')
+
+    parser.add_argument('--sent_emb_file', type=str, default=None, help='sent embedding file')
+    parser.add_argument('--sent_emb_size', type=int, default=50)
+    parser.add_argument('--use_sent', type=int, default=0)
+    parser.add_argument('--sent_suffix', type=str, default='.tbow')
 
     parser.add_argument('--seed', type=int, default=2019)
     parser.add_argument('--save', type=str, default=None)
@@ -78,6 +84,10 @@ if __name__ == '__main__':
         tbow_emb_size2=args.word_emb_size2,
         word_emb_file2=args.word_emb_file2,
         suffix2=args.suffix2,
+        use_sent=args.use_sent,
+        sent_emb_size=args.sent_emb_size,
+        sent_emb_file=args.sent_emb_file,
+        sent_suffix=args.sent_suffix,
         only_tbow=False,
         renew_word_emb=False,
         output_pred=False,

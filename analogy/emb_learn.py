@@ -4,11 +4,12 @@ from collections import defaultdict
 from random import shuffle
 import torch
 import torch.nn as nn
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import numpy as np
 
 from wikiutil.metric import accuracy_nway, get_ranks
 from wikiutil.property import read_subprop_file, get_pid2plabel, get_all_subtree, get_is_ancestor, \
-    get_is_parent, get_leaves, read_nway_file, read_tbow_file
+    get_is_parent, get_leaves, read_nway_file, read_tbow_file, read_sent_file
 from wikiutil.util import load_tsv_as_dict, read_embeddings_from_text_file
 from .emb_gnn import build_graph, EmbGnnModel
 
@@ -18,7 +19,9 @@ class EmbModel(nn.Module):
                  input_size=400, hidden_size=128, padding_idx=None, dropout=0.0,
                  only_prop=False, use_label=False,
                  vocab_size=None, tbow_emb_size=None, word_emb=None,
-                 vocab_size2=None, tbow_emb_size2=None, word_emb2=None, only_tbow=False, use_weight=False):
+                 vocab_size2=None, tbow_emb_size2=None, word_emb2=None,
+                 sent_vocab_size=None, sent_emb_size=None, sent_emb=None,
+                 only_tbow=False, use_weight=False, sent_emb_method='rnn'):
         super(EmbModel, self).__init__()
         self.padding_idx = padding_idx
         self.hidden_size = hidden_size
@@ -31,27 +34,9 @@ class EmbModel(nn.Module):
         if only_prop:
             input_size //= 2
         self.use_label = use_label
-        if use_label:
-            self.ff = nn.Sequential(
-                nn.Dropout(p=dropout),
-                nn.Linear(input_size, hidden_size),
-                nn.ReLU()
-            )
-            self.label_ff = nn.Sequential(
-                nn.Dropout(p=dropout),
-                nn.Linear(input_size, hidden_size),
-                nn.ReLU()
-            )
-        else:
-            self.ff = nn.Sequential(
-                nn.Dropout(p=dropout),
-                nn.Linear(input_size, hidden_size),
-                nn.ReLU(),
-                nn.Dropout(p=dropout)
-            )
-            self.pred_ff = nn.Linear(hidden_size, num_class)
-            if num_anc_class:
-                self.anc_pref_ff = nn.Linear(hidden_size, num_anc_class)
+        assert sent_emb_method in {'avg', 'rnn', 'cnn'}
+        self.sent_emb_method = sent_emb_method
+
         if vocab_size:
             if word_emb is not None:
                 self.tbow_emb = nn.Embedding.from_pretrained(
@@ -74,6 +59,7 @@ class EmbModel(nn.Module):
                 nn.Linear(128, 64),
                 nn.BatchNorm1d(64)
             )
+
         if vocab_size2:
             if word_emb2 is not None:
                 self.tbow_emb2 = nn.Embedding.from_pretrained(
@@ -81,6 +67,51 @@ class EmbModel(nn.Module):
             else:
                 self.tbow_emb2 = nn.Embedding(vocab_size2, tbow_emb_size2, padding_idx=padding_idx)
 
+        if sent_vocab_size:
+            if sent_emb is not None:
+                self.sent_emb = nn.Embedding.from_pretrained(
+                    torch.tensor(sent_emb).float(), freeze=False, padding_idx=padding_idx)
+            else:
+                self.sent_emb = nn.Embedding(sent_vocab_size, sent_emb_size, padding_idx=padding_idx)
+
+            if sent_emb_method == 'rnn':
+                self.num_rnn_layer = 1
+                self.num_rnn_direction = 1
+                self.rnn_hidden_size = 64  # TODO: add param
+                self.rnn = nn.LSTM(sent_emb_size, self.rnn_hidden_size,
+                                   self.num_rnn_layer, bidirectional=self.num_rnn_direction == 2,
+                                   batch_first=True)
+                input_size += self.rnn_hidden_size
+            elif sent_emb_method == 'cnn':
+                self.out_channel = 50  # TODO: add param
+                self.kernel_size = 3
+                padding = (self.kernel_size - 1) // 2
+                self.conv = nn.Conv1d(sent_emb_size, self.out_channel, self.kernel_size, stride=1, padding=padding)
+                input_size += self.out_channel
+            elif sent_emb_method == 'avg':
+                input_size += sent_emb_size
+
+        if use_label:
+            self.ff = nn.Sequential(
+                nn.Dropout(p=dropout),
+                nn.Linear(input_size, hidden_size),
+                nn.ReLU()
+            )
+            self.label_ff = nn.Sequential(
+                nn.Dropout(p=dropout),
+                nn.Linear(input_size, hidden_size),
+                nn.ReLU()
+            )
+        else:
+            self.ff = nn.Sequential(
+                nn.Dropout(p=dropout),
+                nn.Linear(input_size, hidden_size),
+                nn.ReLU(),
+                nn.Dropout(p=dropout)
+            )
+            self.pred_ff = nn.Linear(hidden_size, num_class)
+            if num_anc_class:
+                self.anc_pref_ff = nn.Linear(hidden_size, num_anc_class)
 
 
     def avg_emb(self, ind):
@@ -113,9 +144,64 @@ class EmbModel(nn.Module):
         return tbow_emb
 
 
+    def combine_sent_emb(self,
+                         lookup,
+                         sent_ind,  # SHAPE: (batch_size, num_sent, num_words)
+                         sent_count):  # SHAPE: (batch_size, num_sent)
+        bs, ns, nw = sent_ind.size()
+        # SHAPE: (batch_size * num_sent, num_words)
+        sent_ind = sent_ind.view(-1, nw)
+        # SHAPE: (batch_size * num_sent, num_words)
+        token_mask = sent_ind.ne(self.padding_idx).float()
+        # SHAPE: (batch_size * num_sent)
+        sent_len = token_mask.sum(-1)
+        sent_mask = sent_len.eq(0).long()
+        # some sent is empty, pretend there is one token
+        sent_len = torch.clamp(sent_len, min=1)
+
+        # SHAPE: (batch_size * num_sent, num_words, emb_size)
+        sent_emb = lookup(sent_ind)
+
+        if self.sent_emb_method == 'rnn':
+            packed_sent_emb = pack_padded_sequence(sent_emb, sent_len, batch_first=True, enforce_sorted=False)
+            output, (last_h, last_c) = self.rnn(packed_sent_emb)
+            #output, _ = pad_packed_sequence(output, batch_first=True)
+
+            # SHAPE: (layer, dire, batch_size * num_sent, hidden_size)
+            last_h = last_h.view(self.num_rnn_layer, self.num_rnn_direction, -1, self.rnn_hidden_size)
+            # SHAPE: (batch_size, num_sent, hidden_size)
+            last_h = last_h[-1][0].view(bs, ns, self.rnn_hidden_size)
+            sent_emb = last_h * sent_mask.view(bs, ns, 1).float()  # mask out empty sent
+
+        elif self.sent_emb_method == 'cnn':
+            # SHAPE: (batch_size * num_sent, emb_size, num_words)
+            sent_emb = sent_emb.permute(0, 2, 1)
+            # SHAPE: (batch_size * num_sent, num_words, out_channel)
+            sent_emb = self.conv(sent_emb).permute(0, 2, 1)
+            sent_emb = sent_emb - (1 - token_mask).unsqueeze(-1) * 1e+10
+            # SHAPE: (batch_size * num_sent, out_channel)
+            sent_emb = sent_emb.max(1)[0].view(bs, ns, -1)
+
+        elif self.sent_emb_method == 'avg':
+            token_mask = token_mask.unsqueeze(-1)
+            sent_emb = (sent_emb * token_mask).sum(1) / (token_mask.sum(1) + 1e-10)
+            # SHAPE: (batch_size, num_sent, emb_size)
+            sent_emb = sent_emb.view(bs, ns, -1)
+
+        # sum across sentences
+        sent_count = sent_count.float()
+        sent_count = sent_count / (sent_count.sum(-1, keepdim=True) + 1e-10)
+        if self.use_weight:
+            sent_emb = (sent_emb * sent_count.float().unsqueeze(-1)).sum(1)
+        else:
+            sent_emb = sent_emb.sum(1)
+
+        return sent_emb
+
+
     def forward(self, head, tail, labels,
                 label_head=None, label_tail=None, tbow_ind=None, tbow_count=None, anc_labels=None,
-                tbow_ind2=None, tbow_count2=None):
+                tbow_ind2=None, tbow_count2=None, sent_ind=None, sent_count=None):
         # SHAPE: (batch_size, emb_dim)
         head_emb, tail_emb = self.avg_emb(head), self.avg_emb(tail)
         if self.use_label:
@@ -144,6 +230,10 @@ class EmbModel(nn.Module):
                 emb = torch.cat([emb, tbow_emb], -1)
             else:
                 emb = torch.cat([emb, tbow_emb], -1)
+
+        if sent_ind is not None and sent_count is not None:
+            sent_emb = self.combine_sent_emb(self.sent_emb, sent_ind, sent_count)
+            emb = torch.cat([emb, sent_emb], -1)
 
         pred_repr = self.ff(emb)
 
@@ -186,12 +276,28 @@ def get_tbow_ind(batch, max_num=0):
     return word_ind_tensor, word_count_tensor
 
 
+def get_sent_ind(batch, max_num=0, max_len=None):
+    max_len_in_batch = np.max(np.array([[len(b[i][0]) if i < len(b) else 0 for i in range(max_num)] for b in batch]))
+    # at least one token
+    if max_len:
+        max_len = max(min(max_len, max_len_in_batch), 1)
+    else:
+        max_len = max(max_len_in_batch, 1)
+    word_ind_tensor = torch.tensor([[[b[i][0][j] if j < len(b[i][0]) else 0 for j in range(max_len)]
+                                     if i < len(b) else ([0] * max_len) for i in range(max_num)] for b in batch])
+    word_count_tensor = torch.tensor([[b[i][1] if i < len(b) else 0 for i in range(max_num)] for b in batch])
+    return word_ind_tensor, word_count_tensor
+
+
 def data2tensor(batch, emb_id2ind, only_prop=False, num_occs=10, device=None,
-                label_samples=None, use_tbow=0, use_tbow2=0, use_anc=False, num_occs_label=10):
+                label_samples=None, use_tbow=0, use_tbow2=0, use_sent=0,
+                use_anc=False, num_occs_label=10, max_sent_len=128):  # TODO: add param
     if use_tbow and not use_tbow2:
         batch, tbow_batch = zip(*batch)
     elif use_tbow2:
         batch, tbow_batch, tbow_batch2 = zip(*batch)
+    elif use_sent:
+        batch, sent_batch = zip(*batch)
 
     label_head = label_tail = None
     if only_prop:
@@ -217,6 +323,8 @@ def data2tensor(batch, emb_id2ind, only_prop=False, num_occs=10, device=None,
         anc_labels = None
 
     tbow_ind = tbow_count = None
+    tbow_ind2 = tbow_count2 = None
+    sent_ind = sent_count = None,
     if use_tbow:
         tbow_ind, tbow_count = get_tbow_ind(tbow_batch, max_num=use_tbow)
         tbow_ind = tbow_ind.to(device)
@@ -225,21 +333,24 @@ def data2tensor(batch, emb_id2ind, only_prop=False, num_occs=10, device=None,
         tbow_ind2, tbow_count2 = get_tbow_ind(tbow_batch2, max_num=use_tbow)
         tbow_ind2 = tbow_ind2.to(device)
         tbow_count2 = tbow_count2.to(device)
-    else:
-        tbow_ind2, tbow_count2 = None, None
+    if use_sent:
+        sent_ind, sent_count = get_sent_ind(sent_batch, max_num=use_sent, max_len=max_sent_len)
+        sent_ind = sent_ind.to(device)
+        sent_count = sent_count.to(device)
 
-    return head, tail, labels, label_head, label_tail, tbow_ind, tbow_count, anc_labels, tbow_ind2, tbow_count2
+    return head, tail, labels, label_head, label_tail, tbow_ind, tbow_count, anc_labels, \
+           tbow_ind2, tbow_count2, sent_ind, sent_count
 
 
 def samples2tensors(samples, batch_size, emb_id2ind,
                     num_occs, device, only_prop, label_samples=None,
-                    use_tbow=0, use_tbow2=0, use_anc=False, num_occs_label=0):
+                    use_tbow=0, use_tbow2=0, use_sent=0, use_anc=False, num_occs_label=0):
     tensors: List = []
     for batch in range(0, len(samples), batch_size):
         batch = samples[batch:batch + batch_size]
         tensor = data2tensor(
             batch, emb_id2ind, only_prop=only_prop, num_occs=num_occs, device=device,
-            label_samples=label_samples, use_tbow=use_tbow, use_tbow2=use_tbow2,
+            label_samples=label_samples, use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent,
             use_anc=use_anc, num_occs_label=num_occs_label)
         tensors.append(tensor)
     return tensors
@@ -250,7 +361,7 @@ def one_epoch(model, optimizer, samples, tensors, batch_size, emb_id2ind,
               use_tbow=0, use_anc=False, num_occs_label=0):
     if is_train:
         model.train()
-        #shuffle(samples)  # TODO debug
+        shuffle(samples)
     else:
         model.eval()
 
@@ -284,10 +395,12 @@ def one_epoch(model, optimizer, samples, tensors, batch_size, emb_id2ind,
 def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leaves=False, only_test_on=None,
                   epoch=10, input_size=400, batch_size=128, use_cuda=False, early_stop=None,
                   num_occs=10, num_occs_label=10, hidden_size=128, dropout=0.0, lr=0.001, only_prop=False,
-                  use_tbow=0, use_tbow2=0, tbow_emb_size=50, tbow_emb_size2=50, word_emb_file=None,
-                  word_emb_file2=None, suffix='.tbow', suffix2='.tbow', only_tbow=False,
-                  renew_word_emb=False, output_pred=False, use_ancestor=False, filter_labels=False,
-                  acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam', use_gnn=None):
+                  use_tbow=0, tbow_emb_size=50, word_emb_file=None, suffix='.tbow',  # tbow 1
+                  use_tbow2=0, tbow_emb_size2=50, word_emb_file2=None, suffix2='.tbow',  # tbow 2
+                  use_sent=0, sent_emb_size=50, sent_emb_file=None, sent_suffix='.sent',  # sent
+                  only_tbow=False, renew_word_emb=False, output_pred=False, use_ancestor=False, filter_labels=False,
+                  acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam', use_gnn=None,
+                  sent_emb_method='cnn'):
     subprops = read_subprop_file(subprop_file)
     pid2plabel = get_pid2plabel(subprops)
     subtrees, _ = get_all_subtree(subprops)
@@ -326,37 +439,27 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         test_samples = [((pid, poccs), (plabel, get_anc_label(plabel))) for (pid, poccs), plabel in test_samples]
     print('#ancestor {}'.format(len(anc2ind)))
 
-    train_samples_tbow = dev_samples_tbow = test_samples_tbow = None
-    vocab_size, vocab_size2 = None, None
-    word_emb, word_emb2 = None, None
+    train_samples_li, dev_samples_li, test_samples_li = [train_samples], [dev_samples], [test_samples]
+    for split, sl in [('train', train_samples_li), ('dev', dev_samples_li), ('test', test_samples_li)]:
+        for is_use, suff in [(use_tbow, suffix), (use_tbow2, suffix)]:
+            if is_use:
+                samples_more = read_tbow_file(os.path.join(data_dir, split + suff))
+                assert len(samples_more) == len(sl[0])
+                sl.append(samples_more)
+        for is_use, suff in [(use_sent, sent_suffix)]:
+            if is_use:
+                samples_more = read_sent_file(os.path.join(data_dir, split + suff))
+                assert len(samples_more) == len(sl[0])
+                sl.append(samples_more)
+
+    if len(train_samples_li) > 1:
+        train_samples = list(zip(*train_samples_li))
+        dev_samples = list(zip(*dev_samples_li))
+        test_samples = list(zip(*test_samples_li))
+
+    vocab_size, vocab_size2, sent_vocab_size = None, None, None
+    word_emb, word_emb2, sent_emb = None, None, None
     if use_tbow:
-        train_samples_tbow = read_tbow_file(os.path.join(data_dir, 'train' + suffix))
-        assert len(train_samples_tbow) == len(train_samples)
-        if use_tbow2:
-            train_samples_tbow2 = read_tbow_file(os.path.join(data_dir, 'train' + suffix2))
-            assert len(train_samples_tbow2) == len(train_samples)
-            train_samples = list(zip(train_samples, train_samples_tbow, train_samples_tbow2))
-        else:
-            train_samples = list(zip(train_samples, train_samples_tbow))
-
-        dev_samples_tbow = read_tbow_file(os.path.join(data_dir, 'dev' + suffix))
-        assert len(dev_samples_tbow) == len(dev_samples)
-        if use_tbow2:
-            dev_samples_tbow2 = read_tbow_file(os.path.join(data_dir, 'dev' + suffix2))
-            assert len(dev_samples_tbow2) == len(dev_samples)
-            dev_samples = list(zip(dev_samples, dev_samples_tbow, dev_samples_tbow2))
-        else:
-            dev_samples = list(zip(dev_samples, dev_samples_tbow))
-
-        test_samples_tbow = read_tbow_file(os.path.join(data_dir, 'test' + suffix))
-        assert len(test_samples_tbow) == len(test_samples)
-        if use_tbow2:
-            test_samples_tbow2 = read_tbow_file(os.path.join(data_dir, 'test' + suffix2))
-            assert len(test_samples_tbow2) == len(test_samples)
-            test_samples = list(zip(test_samples, test_samples_tbow, test_samples_tbow2))
-        else:
-            test_samples = list(zip(test_samples, test_samples_tbow))
-
         if word_emb_file:
             word_emb_id2ind, word_emb = read_embeddings_from_text_file(
                 word_emb_file, debug=False, emb_size=tbow_emb_size, first_line=False, use_padding=True, split_char=' ')
@@ -366,23 +469,32 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         else:
             vocab_size = len(load_tsv_as_dict(os.path.join(data_dir, '{}.vocab'.format(suffix.lstrip('.')))))
 
-        if use_tbow2:
-            if word_emb_file2:
-                word_emb_id2ind2, word_emb2 = read_embeddings_from_text_file(
-                    word_emb_file2, debug=False, emb_size=tbow_emb_size2, first_line=False, use_padding=True, split_char=' ')
-                vocab_size2 = len(word_emb_id2ind2)
-                if renew_word_emb:
-                    word_emb2 = None
-            else:
-                vocab_size2 = len(load_tsv_as_dict(os.path.join(data_dir, '{}.vocab'.format(suffix2.lstrip('.')))))
+    if use_tbow2:
+        if word_emb_file2:
+            word_emb_id2ind2, word_emb2 = read_embeddings_from_text_file(
+                word_emb_file2, debug=False, emb_size=tbow_emb_size2, first_line=False, use_padding=True, split_char=' ')
+            vocab_size2 = len(word_emb_id2ind2)
+            if renew_word_emb:
+                word_emb2 = None
+        else:
+            vocab_size2 = len(load_tsv_as_dict(os.path.join(data_dir, '{}.vocab'.format(suffix2.lstrip('.')))))
 
-        print('vocab size 1 {}'.format(vocab_size))
-        print('vocab size 2 {}'.format(vocab_size2))
+    if use_sent:
+        if sent_emb_file:
+            sent_emb_id2ind, sent_emb = read_embeddings_from_text_file(
+                sent_emb_file, debug=False, emb_size=sent_emb_size, first_line=False, use_padding=True, split_char=' ')
+            sent_vocab_size = len(sent_emb_id2ind)
+        else:
+            sent_vocab_size = len(load_tsv_as_dict(os.path.join(data_dir, '{}.vocab'.format(sent_suffix.lstrip('.')))))
+
+    print('vocab size 1 {}'.format(vocab_size))
+    print('vocab size 2 {}'.format(vocab_size2))
+    print('sent vocab size {}'.format(sent_vocab_size))
 
     if filter_leaves:
         print('filter leaves')
         filter_pids = set(leaves)
-        if use_tbow:
+        if use_tbow or use_sent:
             train_samples = [s for s in train_samples if s[0][0][0] not in filter_pids]
             dev_samples = [s for s in dev_samples if s[0][0][0] not in filter_pids]
             test_samples = [s for s in test_samples if s[0][0][0] not in filter_pids]
@@ -393,7 +505,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
 
     if filter_labels:
         print('filter labels')
-        if use_tbow:
+        if use_tbow or use_sent:
             train_samples = [s for s in train_samples if s[0][1] in join_labels]
             dev_samples = [s for s in dev_samples if s[0][1] in join_labels]
             test_samples = [s for s in test_samples if s[0][1] in join_labels]
@@ -414,7 +526,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                 new_samples.append(s)
             return new_samples
 
-        if use_tbow:
+        if use_tbow or use_sent:
             key_func = lambda s: s[0][0][0]
         else:
             key_func = lambda s: s[0][0]
@@ -423,7 +535,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         test_samples = filter_first(test_samples, key_func=key_func)
 
     if only_test_on:
-        if use_tbow:
+        if use_tbow or use_sent:
             test_samples = [s for s in test_samples if s[0][0][0] in only_test_on]
         else:
             test_samples = [s for s in test_samples if s[0][0] in only_test_on]
@@ -513,7 +625,8 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                          use_label=use_label,
                          vocab_size=vocab_size, tbow_emb_size=tbow_emb_size, word_emb=word_emb,
                          vocab_size2=vocab_size2, tbow_emb_size2=tbow_emb_size2, word_emb2=word_emb2,
-                         only_tbow=only_tbow, use_weight=use_weight)
+                         sent_vocab_size=sent_vocab_size, sent_emb_size=sent_emb_size, sent_emb=sent_emb,
+                         only_tbow=only_tbow, use_weight=use_weight, sent_emb_method=sent_emb_method)
     emb_model.to(device)
     if optimizer == 'adam':
         optimizer = torch.optim.Adam(emb_model.parameters(), lr=lr)
@@ -528,13 +641,13 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
     metrics = []
     train_tensors = samples2tensors(
         train_samples, batch_size, emb_id2ind, num_occs, device, only_prop, label_samples=label_samples,
-        use_tbow=use_tbow, use_tbow2=use_tbow2, use_anc=use_ancestor, num_occs_label=num_occs_label)
+        use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_ancestor, num_occs_label=num_occs_label)
     dev_tensors = samples2tensors(
         dev_samples, batch_size, emb_id2ind, num_occs, device, only_prop, label_samples=label_samples,
-        use_tbow=use_tbow, use_tbow2=use_tbow2, use_anc=use_ancestor, num_occs_label=num_occs_label)
+        use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_ancestor, num_occs_label=num_occs_label)
     test_tensors = samples2tensors(
         test_samples, batch_size, emb_id2ind, num_occs, device, only_prop, label_samples=label_samples,
-        use_tbow=use_tbow, use_tbow2=use_tbow2, use_anc=use_ancestor, num_occs_label=num_occs_label)
+        use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_ancestor, num_occs_label=num_occs_label)
     for e in range(epoch):
         # train
         train_loss, train_pred, _ = one_epoch(

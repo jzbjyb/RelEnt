@@ -23,9 +23,13 @@ word_emb_file2='data/emb/glove.6B.50d.txt'
 word_emb_size2=50
 suffix2='.tbow'
 
+sent_emb_size=50
+sent_emb_file=${dataset_dir}/emb/dep_sent.txt
+sent_suffix='.dep_sent'
+
 for seed in 0 1 2 3 4 2019 1000 256 77 9541
 do
-    for use_tbow in 0
+    for use_tbow in 5
     do
         echo "======="
         echo ${seed} ${use_tbow}
@@ -34,9 +38,10 @@ do
             --dataset_dir ${dataset_dir} \
             --subprop_file ${subprop_file} \
             --emb_file ${emb_file} \
-            --word_emb_size ${word_emb_size} \
-            --use_tbow ${use_tbow} \
-            --suffix ${suffix} \
+            --use_sent ${use_tbow} \
+            --sent_emb_size ${sent_emb_size} \
+            --sent_emb_file ${sent_emb_file} \
+            --sent_suffix ${sent_suffix} \
             --lr 0.001 \
             --epoch 500 \
             --early_stop 100 \

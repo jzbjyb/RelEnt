@@ -182,6 +182,25 @@ def read_tbow_file(filename):
     return result
 
 
+def read_sent_file(filename):
+    result: List[List[Tuple[List[int], int]]] = []
+    with open(filename, 'r') as fin:
+        for l in fin:
+            l = l.strip()
+            if l == '':
+                result.append([])
+            else:
+                sent_li = []
+                l = l.split('\t')
+                assert len(l) % 2 == 0, 'format wrong'
+                for i in range(len(l) // 2):
+                    sent, count = l[2 * i], int(l[2 * i + 1])
+                    sent = list(map(int, sent.split(' ')))
+                    sent_li.append((sent, count))
+                result.append(sent_li)
+    return result
+
+
 def read_multi_pointiwse_file(filepath,
                               filter_prop: set = None,
                               keep_n_per_prop: int = None) \

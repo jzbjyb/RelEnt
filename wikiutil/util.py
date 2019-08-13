@@ -133,20 +133,22 @@ def load_embedding_cache():
     def wrapper(func):
         @functools.wraps(func)
         def new_func(filepath, *args, **kwargs):
+            use_cache = 'use_cache' not in kwargs or kwargs['use_cache']
             emb_cache = filepath + '.npz'
             emb_id2ind_cache = filepath + '.id2ind'
-            if os.path.exists(emb_cache) and os.path.exists(emb_id2ind_cache):
+            if use_cache and os.path.exists(emb_cache) and os.path.exists(emb_id2ind_cache):
                 print('load emb from cache ...')
                 with open(emb_id2ind_cache, 'rb') as fin:
                     emb_id2ind = pickle.load(fin)
                 emb = np.load(emb_cache)
             else:
                 emb_id2ind, emb = func(filepath, *args, **kwargs)
-                print('cache emb ...')
-                with open(emb_id2ind_cache, 'wb') as fout:
-                    pickle.dump(emb_id2ind, fout)
-                with open(emb_cache, 'wb') as fout:
-                    np.save(fout, emb)
+                if use_cache:
+                    print('cache emb ...')
+                    with open(emb_id2ind_cache, 'wb') as fout:
+                        pickle.dump(emb_id2ind, fout)
+                    with open(emb_cache, 'wb') as fout:
+                        np.save(fout, emb)
             return emb_id2ind, emb
         return new_func
     return wrapper
@@ -176,7 +178,8 @@ def read_embeddings_from_text_file(filepath: str,
                                    emb_size: int = None,
                                    first_line: bool = False,
                                    use_padding: bool = False,
-                                   split_char: str = '\t') -> Tuple[Dict[str, int], np.ndarray]:
+                                   split_char: str = '\t',
+                                   use_cache: bool = True) -> Tuple[Dict[str, int], np.ndarray]:
     print('load emb from {} ...'.format(filepath))
     id2ind = defaultdict(lambda: len(id2ind))
     emb = []

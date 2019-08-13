@@ -43,6 +43,7 @@ if __name__ == '__main__':
     parser.add_argument('--only_one_sample_per_prop', action='store_true')
     parser.add_argument('--filter_labels', action='store_true')
     parser.add_argument('--use_gnn', type=str, default=None)
+    parser.add_argument('--sent_emb_method', type=str, default='cnn')
 
     args = parser.parse_args()
 
@@ -95,7 +96,8 @@ if __name__ == '__main__':
         acc_topk=1,
         use_weight=True,
         only_one_sample_per_prop=args.only_one_sample_per_prop,
-        use_gnn=args.use_gnn)
+        use_gnn=args.use_gnn,
+        sent_emb_method=args.sent_emb_method)
 
     print('final metrics: {}'.format(np.mean(metrics[-50:])))
 

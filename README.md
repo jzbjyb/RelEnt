@@ -79,3 +79,5 @@ for e in mention.evokes():
 ## Experiments
 
 [Google sheet](https://docs.google.com/spreadsheets/d/17jdKww8Ao6B8ahfjQMhQ3dzlBWdc1zAHSxcU6yz8nf8/edit?usp=sharing) used to track experimental resutls.
+
+[Google sheet](https://docs.google.com/spreadsheets/d/13YP1EvgpxYohdSOQZgf_SzoLwEcTFpLprqOt8uuPiRE/edit?usp=sharing) used to track ranking results.

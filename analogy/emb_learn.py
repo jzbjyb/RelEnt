@@ -704,9 +704,18 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         last_metric = dev_metric
         metrics.append(test_metric)
 
+    # get top 10 rank
+    _, train_ranks, _, _ = accuracy_nway(
+        train_pred, ind2label=ind2label, topk=10, num_classes=len(label2ind))
+    _, dev_ranks, _, _ = accuracy_nway(
+        dev_pred, ind2label=ind2label, topk=10, num_classes=len(label2ind))
+    _, test_ranks, _, _ = accuracy_nway(
+        test_pred, ind2label=ind2label, topk=10, num_classes=len(label2ind))
+
     test_ranks = get_ranks(test_ranks, is_parent=is_parent, is_ancestor=is_ancestor)
     dev_ranks = get_ranks(dev_ranks, is_parent=is_parent, is_ancestor=is_ancestor)
     train_ranks = get_ranks(train_ranks, is_parent=is_parent, is_ancestor=is_ancestor)
+
     if output_pred:
         for fn in ['train', 'dev', 'test']:
             with open(os.path.join(data_dir, fn + '.pred'), 'w') as fout:

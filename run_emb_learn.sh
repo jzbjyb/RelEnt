@@ -38,16 +38,16 @@ do
             --dataset_dir ${dataset_dir} \
             --subprop_file ${subprop_file} \
             --emb_file ${emb_file} \
-            --use_sent ${use_tbow} \
-            --sent_emb_size ${sent_emb_size} \
-            --sent_emb_file ${sent_emb_file} \
-            --sent_suffix ${sent_suffix} \
+            --use_tbow ${use_tbow} \
+            --word_emb_size ${word_emb_size} \
+            --suffix ${suffix} \
             --lr 0.001 \
             --epoch 500 \
             --early_stop 100 \
             --seed ${seed} \
             --only_one_sample_per_prop \
             --filter_labels \
-            --sent_emb_method avg
+            --sent_emb_method avg \
+            --save ranks
     done
 done

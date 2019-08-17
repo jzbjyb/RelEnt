@@ -11,7 +11,7 @@ from tqdm import tqdm
 import numpy as np
 from wikiutil.property import read_subprop_file, get_all_subtree, \
     get_is_sibling, read_subgraph_file, get_is_parent, PropertyOccurrence, get_is_ancestor, get_pid2plabel, \
-    remove_common_child
+    remove_common_child, save_all_subtree
 from wikiutil.util import read_emb_ids, save_emb_ids, DefaultOrderedDict, load_tsv_as_list, load_tsv_as_dict
 
 

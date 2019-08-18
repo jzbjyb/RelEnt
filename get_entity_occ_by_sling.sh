@@ -5,8 +5,8 @@ ulimit -n 10000
 
 for fid in 0 1 2 3 4 5 6 7 8 9; do
     dir_fid=data_new/property_occurrence_prop435k_split_dedup_sling/${fid}
-    echo remove ${dir_fid}
-    rm -rf ${dir_fid}
+    #echo remove ${dir_fid}
+    #rm -rf ${dir_fid}
     mkdir -p ${dir_fid}
 done
 

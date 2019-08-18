@@ -883,7 +883,7 @@ def get_entity_occ_by_sling(args, max_num_sent, dist_thres, max_sent_len):
                                      record_files=os.path.join(sling_record_dir, sling_record_file))
 
 
-def get_entity_occ_dep_by_sling(args, first=None):
+def get_entity_occ_dep_by_sling(args, from_ind=None, to_ind=None):
     nlp = spacy.load('en_core_web_sm')
     nlp.tokenizer = CharTokenizer(nlp.vocab, char=' ')
 
@@ -913,9 +913,13 @@ def get_entity_occ_dep_by_sling(args, first=None):
                     hid_li.append(hid)
                     tid_li.append(tid)
 
-            if first:
+            if from_ind is not None and to_ind is not None:
                 doc_li, hpos_li, tpos_li, hid_li, tid_li = \
-                    doc_li[:first], hpos_li[:first], tpos_li[:first], hid_li[:first], tid_li[:first]
+                    doc_li[from_ind:to_ind], hpos_li[from_ind:to_ind], tpos_li[from_ind:to_ind], \
+                    hid_li[from_ind:to_ind], tid_li[from_ind:to_ind]
+
+            if len(doc_li) == 0:
+                continue
 
             print('write {}'.format(to_file))
             with open(to_file, 'w') as fout:
@@ -1309,7 +1313,7 @@ if __name__ == '__main__':
     elif args.task == 'get_entity_occ_by_sling':
         get_entity_occ_by_sling(args, max_num_sent=None, dist_thres=100, max_sent_len=200)
     elif args.task == 'get_entity_occ_dep_by_sling':
-        get_entity_occ_dep_by_sling(args, first=5000)
+        get_entity_occ_dep_by_sling(args, from_ind=5000, to_ind=20000)
     elif args.task == 'get_wikidata_item_popularity_by_sling':
         get_wikidata_item_popularity_by_sling(args)
     elif args.task == 'wikidata_contained_by_sling':

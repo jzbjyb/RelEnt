@@ -28,6 +28,9 @@ if __name__ == '__main__':
     parser.add_argument('--filter_num_poccs', type=int, default=None, help='properties larger than this are kept')
     parser.add_argument('--skip_split', action='store_true')
     parser.add_argument('--only_prop_emb', action='store_true')
+    parser.add_argument('--top', type=int, default=100)
+    parser.add_argument('--sigma', type=float, default=1.0)
+    parser.add_argument('--use_norm', action='store_true')
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -46,7 +49,7 @@ if __name__ == '__main__':
         args.subprop_file,
         emb,
         emb_id2ind,
-        top=100,
+        top=args.top,
         method=args.method,
         only_prop_emb=args.only_prop_emb,
         detect_cheat=False,
@@ -57,7 +60,8 @@ if __name__ == '__main__':
         skip_split=args.skip_split,
         ori_subprops='data/subprops.txt',
         debug=args.debug,
-        sigma=1.0)
+        sigma=args.sigma,
+        use_norm=args.use_norm)
 
     if args.save:
         if not os.path.exists(args.save):

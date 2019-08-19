@@ -35,9 +35,13 @@ def get_label_dist(props, labels, is_parent, pid2plabel):
     print(sorted(zip(u, c), key=lambda x: -x[1]))
 
 
-def sim_func(child_emb, parent_emb, method='cosine', sigma=1.0, kde_c=None, kde_p=None):
+def sim_func(child_emb, parent_emb, method='cosine', sigma=1.0,
+             kde_c=None, kde_p=None, kde_c_prob=None, kde_p_prob=None):
     if method == 'cosine':
         return np.mean(cosine_similarity(child_emb, parent_emb))
+
+    if method == 'euc':
+        return -np.mean(euclidean_distances(child_emb, parent_emb))
 
     if method == 'expeuc':
         dist = np.expand_dims(child_emb, 1) - np.expand_dims(parent_emb, 0)
@@ -87,9 +91,10 @@ def sim_func(child_emb, parent_emb, method='cosine', sigma=1.0, kde_c=None, kde_
             kde_c = KernelDensity(kernel='gaussian', bandwidth=sigma).fit(child_emb)
         if kde_p is None:
             kde_p = KernelDensity(kernel='gaussian', bandwidth=sigma).fit(parent_emb)
-        child_prob = kde_c.score_samples(child_emb)
+        if kde_c_prob is None:
+            kde_c_prob = kde_c.score_samples(child_emb)
         parent_prob = kde_p.score_samples(child_emb)
-        kl = np.sum(np.exp(child_prob) * (child_prob - parent_prob))
+        kl = np.sum(np.exp(kde_c_prob) * (kde_c_prob - parent_prob))
         return -kl
 
     raise NotImplementedError
@@ -98,14 +103,15 @@ def sim_func(child_emb, parent_emb, method='cosine', sigma=1.0, kde_c=None, kde_
 def compute_one(this_pid,
                 label_embs=None, detect_cheat=None, is_parent=None,
                 is_ancestor=None, method=None, **kwargs):
-    pid, poccs, pid_emb = this_pid
+    pid, poccs, pid_emb, kde, kde_prob = this_pid
     ranks = []
-    for l, ls, ls_emb in label_embs:
+    for l, ls, ls_emb, l_kde, l_kde_prob in label_embs:
         if pid == l:
             continue
         if detect_cheat and (l, pid) in is_ancestor and len(set(poccs) & set(ls)) > 0:
             raise Exception('parent {} child {} is cheating'.format(pid, l))
-        sim = sim_func(pid_emb, ls_emb, method=method, **kwargs)
+        sim = sim_func(pid_emb, ls_emb, method=method, kde_c=kde, kde_p=l_kde,
+                       kde_c_prob=kde_prob, kde_p_prob=l_kde_prob, **kwargs)
         ranks.append((l, sim))
 
     ranks = sorted(ranks, key=lambda x: -x[1])
@@ -113,10 +119,14 @@ def compute_one(this_pid,
     return pid, ranks
 
 
+def norm(emb):
+    return emb / (np.sqrt((emb * emb).sum(-1, keepdims=True)) + 1e-10)
+
+
 def compute_overlap(data_dir, split, poccs, subprops, emb, emb_id2ind, top=100, method='cosine',
                     only_prop_emb=False, detect_cheat=True, use_minus=False,
                     filter_num_poccs=None, filter_pids=None, num_workers=1, skip_split=False,
-                    ori_subprops=None, debug=False, **kwargs):
+                    ori_subprops=None, debug=False, use_norm=False, **kwargs):
     emb_dim = emb.shape[1]
     print('#words in emb: {}'.format(len(emb_id2ind)))
 
@@ -183,7 +193,15 @@ def compute_overlap(data_dir, split, poccs, subprops, emb, emb_id2ind, top=100, 
             ls_emb = ls_emb[:, :emb_dim] - ls_emb[:, emb_dim:]
         if ls_emb.shape[0] <= 0:
             continue
-        label_embs.append((l, ls, ls_emb))
+        if use_norm:
+            ls_emb = norm(ls_emb)
+        if method == 'kde':
+            kde = KernelDensity(kernel='gaussian', bandwidth=kwargs['sigma']).fit(ls_emb)
+            kde_p = kde.score_samples(ls_emb)
+        else:
+            kde = None
+            kde_p = None
+        label_embs.append((l, ls, ls_emb, kde, kde_p))
 
     # collect embs for properties
     prop_embs = []
@@ -191,7 +209,7 @@ def compute_overlap(data_dir, split, poccs, subprops, emb, emb_id2ind, top=100, 
         if filter_pids and tp not in filter_pids:
             continue
         has_parent = False
-        for l, _, _ in label_embs:
+        for l, _, _, _, _ in label_embs:
             if (l, tp) in is_parent:
                 has_parent = True
         if not has_parent:
@@ -208,7 +226,15 @@ def compute_overlap(data_dir, split, poccs, subprops, emb, emb_id2ind, top=100, 
             tps_emb = tps_emb[:, :emb_dim] - tps_emb[:, emb_dim:]
         if len(tps_emb) == 0:
             continue
-        prop_embs.append((tp, tps, tps_emb))
+        if use_norm:
+            tps_emb = norm(tps_emb)
+        if method == 'kde':
+            kde = KernelDensity(kernel='gaussian', bandwidth=kwargs['sigma']).fit(tps_emb)
+            kde_p = kde.score_samples(tps_emb)
+        else:
+            kde = None
+            kde_p = None
+        prop_embs.append((tp, tps, tps_emb, kde, kde_p))
 
     # iterate over properties
     start_time = time.time()

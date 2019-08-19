@@ -7,12 +7,12 @@ set -e
 
 dataset_dir=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph10_sample5_parent_occ_popu/
 subprop_file=data_new/property_occurrence_prop435k_split_dedup/subprops_random
-emb_file=../pytorch_big_graph/emb_new_dedup/transe.txt
+emb_file=../pytorch_big_graph/emb_new_dedeup_shuf_default/transe.txt
 #word_emb_file='data/emb/glove.6B.50d.txt'
 #word_emb_size=50
 #suffix='.tbow'
 
-#word_emb_file='../pytorch_big_graph/emb_new_dedup/transe.txt'
+#word_emb_file='../pytorch_big_graph/emb_new_dedup_shuf/transe_cos.txt'
 #word_emb_size=200
 #suffix='.kg_tbow'
 
@@ -29,7 +29,7 @@ sent_suffix='.dep_sent_lower'
 
 for seed in 0 1 2 3 4 2019 1000 256 77 9541
 do
-    for use_tbow in 5
+    for use_tbow in 0 5
     do
         echo "======="
         echo ${seed} ${use_tbow}
@@ -48,6 +48,14 @@ do
             --only_one_sample_per_prop \
             --filter_labels \
             --sent_emb_method avg \
-            --save ranks
+            #--no_cuda
+            #--save ranks
     done
 done
+
+: '
+--use_sent ${use_tbow} \
+--sent_emb_size ${sent_emb_size} \
+--sent_emb_file ${sent_emb_file} \
+--sent_suffix ${sent_suffix} \
+'

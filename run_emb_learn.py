@@ -34,6 +34,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--seed', type=int, default=2019)
     parser.add_argument('--save', type=str, default=None)
+    parser.add_argument('--no_cuda', action='store_true')
 
     parser.add_argument('--optimizer', type=str, default='rmsprop')
     parser.add_argument('--epoch', type=int, default=100)
@@ -68,7 +69,7 @@ if __name__ == '__main__':
         optimizer=args.optimizer,
         epoch=args.epoch,
         batch_size=args.batch_size,
-        use_cuda=True,
+        use_cuda=not args.no_cuda,
         early_stop=args.early_stop,
         num_occs=10,
         num_occs_label=200,

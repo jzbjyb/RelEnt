@@ -83,7 +83,7 @@ class EmbModel(nn.Module):
                 if sem.startswith('rnn_'):
                     self.num_rnn_layer = 1
                     self.num_rnn_direction = 2
-                    self.rnn_hidden_size = 32  # TODO: add param
+                    self.rnn_hidden_size = 16  # TODO: add param
                     self.rnn = nn.LSTM(sent_emb_size, self.rnn_hidden_size,
                                        num_layers=self.num_rnn_layer, bidirectional=self.num_rnn_direction == 2,
                                        batch_first=True)
@@ -91,7 +91,7 @@ class EmbModel(nn.Module):
                     if sem == 'rnn_last_mean':
                         input_size += sent_emb_size
                 elif sem.startswith('cnn_'):
-                    self.out_channel = 50  # TODO: add param
+                    self.out_channel = 16  # TODO: add param
                     self.kernel_size = 3
                     padding = (self.kernel_size - 1) // 2
                     self.conv = nn.Conv1d(sent_emb_size, self.out_channel, self.kernel_size, stride=1, padding=padding)

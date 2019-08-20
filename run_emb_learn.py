@@ -37,6 +37,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_cuda', action='store_true')
 
     parser.add_argument('--optimizer', type=str, default='rmsprop')
+    parser.add_argument('--num_occs', type=int, default=10)
     parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--early_stop', type=int, default=0)
     parser.add_argument('--lr', type=float, default=1e-3)
@@ -71,7 +72,7 @@ if __name__ == '__main__':
         batch_size=args.batch_size,
         use_cuda=not args.no_cuda,
         early_stop=args.early_stop,
-        num_occs=10,
+        num_occs=args.num_occs,
         num_occs_label=200,
         input_size=input_size,
         hidden_size=128,
@@ -100,7 +101,7 @@ if __name__ == '__main__':
         use_gnn=args.use_gnn,
         sent_emb_method=args.sent_emb_method)
 
-    print('final metrics: {}'.format(np.mean(metrics[-50:])))
+    print('final metrics: {}'.format(np.mean(metrics[-args.early_stop:])))
 
     if args.save:
         if not os.path.exists(args.save):

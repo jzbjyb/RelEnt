@@ -219,6 +219,8 @@ def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]],
                   topk=1,
                   use_average=False,
                   num_classes=0):
+    if topk is None:
+        topk = num_classes
     assert method in {'macro', 'micro'}
     pid2acc = defaultdict(lambda: [])
     corr, total = 0, 0
@@ -229,7 +231,9 @@ def accuracy_nway(predictions: List[Tuple[str, np.ndarray, int]],
     for pid, logits, label in predictions:
         if pid in label2ind:
             logits[label2ind[pid]] = -np.inf
-        label2pred[label] += np.exp(logits) / np.sum(np.exp(logits))
+        max_logits = np.max(logits)
+        exp_logits = np.exp(logits - max_logits)
+        label2pred[label] += exp_logits / np.sum(exp_logits)
         if topk == 1:
             ind = [np.argmax(logits)]
         else:
@@ -348,17 +352,23 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
     return corr / total, ranks
 
 
-def rank_to_csv(ranks: Dict[str, List], filepath: str, key2name: Dict[str, str] = None):
+def rank_to_csv(ranks: Dict[str, List], filepath: str, key2name: Dict[str, str] = None,
+                simple_save=False, label2ind=None):
     def doc_formatter(docid: str, score: float, comment: str):
         if key2name is not None:
             docid = key2name[docid]
         return ' '.join(['"' + docid + '"', '{:.2f}'.format(score), comment])
     max_num_docs = np.max([len(r) for q, r in ranks.items()])
     with open(filepath, 'w') as fout:
-        fout.write('query,' + ','.join(map(lambda x: 'pos_' + str(x), range(max_num_docs))) + '\n')
+        if not simple_save:
+            fout.write('query,' + ','.join(map(lambda x: 'pos_' + str(x), range(max_num_docs))) + '\n')
         for q, r in sorted(ranks.items(), key=itemgetter(0)):
-            if key2name is not None:
-                q = key2name[q]
-            fout.write('"{}"'.format(q) + ',')
-            fout.write(','.join(map(lambda x: doc_formatter(*x), r)))
+            if not simple_save:
+                if key2name is not None:
+                    q = key2name[q]
+                fout.write('"{}"'.format(q) + ',')
+                fout.write(','.join(map(lambda x: doc_formatter(*x), r)))
+            else:
+                li = [q] + [label2ind[docid] for docid, _, _ in r]
+                fout.write(','.join(li))
             fout.write('\n')

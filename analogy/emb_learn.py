@@ -233,8 +233,11 @@ class EmbModel(nn.Module):
 
 
     def forward(self, head, tail, labels,
-                label_head=None, label_tail=None, tbow_ind=None, tbow_count=None, anc_labels=None,
-                tbow_ind2=None, tbow_count2=None, sent_ind=None, sent_count=None):
+                tbow_ind=None, tbow_count=None, anc_labels=None,
+                tbow_ind2=None, tbow_count2=None, sent_ind=None, sent_count=None,
+                label_head=None, label_tail=None, label_labels=None,
+                label_tbow_ind=None, label_tbow_count=None, label_anc_labels=None,
+                label_tbow_ind2=None, label_tbow_count2=None, label_sent_ind=None, label_sent_count=None):
         # SHAPE: (batch_size, emb_dim)
         head_emb, tail_emb = self.avg_emb(head), self.avg_emb(tail)
         if self.use_label:
@@ -252,21 +255,36 @@ class EmbModel(nn.Module):
 
         if tbow_ind is not None and tbow_count is not None:
             tbow_emb = self.combine_tbow_emb(self.tbow_emb, tbow_ind, tbow_count, emb)
+            if self.use_label:
+                label_tbow_emb = self.combine_tbow_emb(self.tbow_emb, label_tbow_ind, label_tbow_count, label_emb)
             if self.only_tbow:
                 emb = tbow_emb
+                if self.use_label:
+                    label_emb = label_tbow_emb
             else:
                 emb = torch.cat([emb, tbow_emb], -1)
+                if self.use_label:
+                    label_emb = torch.cat([label_emb, label_tbow_emb], -1)
 
         if tbow_ind2 is not None and tbow_count2 is not None:
             tbow_emb = self.combine_tbow_emb(self.tbow_emb2, tbow_ind2, tbow_count2, emb)
+            if self.use_label:
+                label_tbow_emb = self.combine_tbow_emb(self.tbow_emb2, label_tbow_ind2, label_tbow_count2, label_emb)
             if self.only_tbow:
                 emb = torch.cat([emb, tbow_emb], -1)
+                if self.use_label:
+                    label_emb = label_tbow_emb
             else:
                 emb = torch.cat([emb, tbow_emb], -1)
+                if self.use_label:
+                    label_emb = torch.cat([label_emb, label_tbow_emb], -1)
 
         if sent_ind is not None and sent_count is not None:
             sent_emb = self.combine_sent_emb(self.sent_emb, sent_ind, sent_count)
             emb = torch.cat([emb, sent_emb], -1)
+            if self.use_label:
+                label_sent_emb = self.combine_sent_emb(self.sent_emb, label_sent_ind, label_sent_count)
+                label_emb = torch.cat([label_emb, label_sent_emb], -1)
 
         pred_repr = self.ff(emb)
 
@@ -323,8 +341,7 @@ def get_sent_ind(batch, max_num=0, max_len=None):
 
 
 def data2tensor(batch, emb_id2ind, only_prop=False, num_occs=10, device=None,
-                label_samples=None, use_tbow=0, use_tbow2=0, use_sent=0,
-                use_anc=False, num_occs_label=10, max_sent_len=128):  # TODO: add param
+                use_tbow=0, use_tbow2=0, use_sent=0, use_anc=False, max_sent_len=128):  # TODO: add param
     if use_tbow and not use_tbow2:
         batch, tbow_batch = zip(*batch)
     elif use_tbow2:
@@ -336,17 +353,9 @@ def data2tensor(batch, emb_id2ind, only_prop=False, num_occs=10, device=None,
     if only_prop:
         head = get_prop_emb_ind(batch, emb_id2ind).to(device)
         tail = head
-        if label_samples is not None:
-            label_head = get_prop_emb_ind(label_samples, emb_id2ind).to(device)
-            label_tail = label_head
     else:
         head = get_occ_emb_ind(batch, emb_id2ind, num_occs, pos=0).to(device)
         tail = get_occ_emb_ind(batch, emb_id2ind, num_occs, pos=1).to(device)
-        if label_samples is not None:
-            label_head = get_occ_emb_ind(
-                label_samples, emb_id2ind, num_occs_label, pos=0, batch_filter=batch).to(device)
-            label_tail = get_occ_emb_ind(
-                label_samples, emb_id2ind, num_occs_label, pos=1, batch_filter=batch).to(device)
 
     if use_anc:
         labels = torch.tensor([b[1][0] for b in batch]).long().to(device)
@@ -371,27 +380,25 @@ def data2tensor(batch, emb_id2ind, only_prop=False, num_occs=10, device=None,
         sent_ind = sent_ind.to(device)
         sent_count = sent_count.to(device)
 
-    return head, tail, labels, label_head, label_tail, tbow_ind, tbow_count, anc_labels, \
+    return head, tail, labels, tbow_ind, tbow_count, anc_labels, \
            tbow_ind2, tbow_count2, sent_ind, sent_count
 
 
-def samples2tensors(samples, batch_size, emb_id2ind,
-                    num_occs, device, only_prop, label_samples=None,
-                    use_tbow=0, use_tbow2=0, use_sent=0, use_anc=False, num_occs_label=0):
+def samples2tensors(samples, batch_size, emb_id2ind, num_occs, device, only_prop,
+                    use_tbow=0, use_tbow2=0, use_sent=0, use_anc=False):
     tensors: List = []
     for batch in range(0, len(samples), batch_size):
         batch = samples[batch:batch + batch_size]
         tensor = data2tensor(
             batch, emb_id2ind, only_prop=only_prop, num_occs=num_occs, device=device,
-            label_samples=label_samples, use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent,
-            use_anc=use_anc, num_occs_label=num_occs_label)
+            use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_anc)
         tensors.append(tensor)
     return tensors
 
 
 def one_epoch(model, optimizer, samples, tensors, batch_size, emb_id2ind,
-              num_occs, device, only_prop, is_train, label_samples=None,
-              use_tbow=0, use_anc=False, num_occs_label=0):
+              num_occs, device, only_prop, is_train, label_samples=None, label_tensors=None,
+              use_tbow=0, use_sent=0, use_anc=False, num_occs_label=0):
     if is_train:
         model.train()
         shuffle(samples)
@@ -404,6 +411,8 @@ def one_epoch(model, optimizer, samples, tensors, batch_size, emb_id2ind,
     for i in range(0, len(samples), batch_size):
         batch = samples[i:i + batch_size]
         tensor = tensors[i // batch_size]
+        if label_tensors:
+            tensor += label_tensors
         logits, loss = model(*tensor)
         labels = tensor[2]  # TODO: better structure
         if is_train and loss.requires_grad:
@@ -414,7 +423,7 @@ def one_epoch(model, optimizer, samples, tensors, batch_size, emb_id2ind,
 
         loss_li.append(loss.item())
         logits = logits.detach().cpu().numpy()
-        if use_tbow:
+        if use_tbow or use_sent:
             pred_li.extend([(b[0][0][0], logits[i], labels[i].item())
                             for i, b in enumerate(batch)])
         else:
@@ -433,7 +442,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                   use_sent=0, sent_emb_size=50, sent_emb_file=None, sent_suffix='.sent',  # sent
                   only_tbow=False, renew_word_emb=False, output_pred=False, use_ancestor=False, filter_labels=False,
                   acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam', use_gnn=None,
-                  sent_emb_method='cnn_mean'):
+                  sent_emb_method='cnn_mean', lr_decay=0):
     subprops = read_subprop_file(subprop_file)
     pid2plabel = get_pid2plabel(subprops)
     subtrees, _ = get_all_subtree(subprops)
@@ -579,6 +588,20 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         for (pid, occs), l in label_samples:
             label_samples_dict[l].extend(occs)
         label_samples = [((ind2label[l], label_samples_dict[l]), l) for l in sorted(label_samples_dict.keys())]
+        label_samples_li = [label_samples]
+        # extend label samples by features
+        for is_use, suff in [(use_tbow, suffix), (use_tbow2, suffix)]:
+            if is_use:
+                samples_more = read_tbow_file(os.path.join(data_dir, 'label' + suff))
+                assert len(samples_more) == len(label_samples_li[0])
+                label_samples_li.append(samples_more)
+        for is_use, suff in [(use_sent, sent_suffix)]:
+            if is_use:
+                samples_more = read_sent_file(os.path.join(data_dir, 'label' + suff))
+                assert len(samples_more) == len(label_samples_li[0])
+                label_samples_li.append(samples_more)
+        if len(label_samples_li) > 1:
+            label_samples = list(zip(*label_samples_li))
     else:
         label_samples = None
 
@@ -669,37 +692,45 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         optimizer = torch.optim.RMSprop(emb_model.parameters(), lr=lr)
     else:
         raise NotImplementedError
+    if lr_decay:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=lr_decay)
 
     last_metric, last_count = None, 0
     metrics = []
     train_tensors = samples2tensors(
-        train_samples, batch_size, emb_id2ind, num_occs, device, only_prop, label_samples=label_samples,
-        use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_ancestor, num_occs_label=num_occs_label)
+        train_samples, batch_size, emb_id2ind, num_occs, device, only_prop,
+        use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_ancestor)
     dev_tensors = samples2tensors(
-        dev_samples, batch_size, emb_id2ind, num_occs, device, only_prop, label_samples=label_samples,
-        use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_ancestor, num_occs_label=num_occs_label)
+        dev_samples, batch_size, emb_id2ind, num_occs, device, only_prop,
+        use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_ancestor)
     test_tensors = samples2tensors(
-        test_samples, batch_size, emb_id2ind, num_occs, device, only_prop, label_samples=label_samples,
-        use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_ancestor, num_occs_label=num_occs_label)
+        test_samples, batch_size, emb_id2ind, num_occs, device, only_prop,
+        use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_ancestor)
+    if use_label:
+        label_tensors = samples2tensors(
+            label_samples, len(label_samples), emb_id2ind, num_occs_label, device, only_prop,
+            use_tbow=use_tbow, use_tbow2=use_tbow2, use_sent=use_sent, use_anc=use_ancestor)[0]
+    else:
+        label_tensors = None
     for e in range(epoch):
         # train
         train_loss, train_pred, _ = one_epoch(
             emb_model, optimizer, train_samples, train_tensors, batch_size,
             emb_id2ind, num_occs, device, only_prop, is_train=True,
-            label_samples=label_samples, use_tbow=use_tbow, use_anc=use_ancestor,
-            num_occs_label=num_occs_label)
+            label_samples=label_samples, label_tensors=label_tensors,
+            use_tbow=use_tbow, use_sent=use_sent, use_anc=use_ancestor, num_occs_label=num_occs_label)
         # dev
         dev_loss, dev_pred, _ = one_epoch(
             emb_model, optimizer, dev_samples, dev_tensors, batch_size,
             emb_id2ind, num_occs, device, only_prop, is_train=False,
-            label_samples=label_samples, use_tbow=use_tbow, use_anc=use_ancestor,
-            num_occs_label=num_occs_label)
+            label_samples=label_samples, label_tensors=label_tensors,
+            use_tbow=use_tbow, use_sent=use_sent, use_anc=use_ancestor, num_occs_label=num_occs_label)
         # test
         test_loss, test_pred, _ = one_epoch(
             emb_model, optimizer, test_samples, test_tensors, batch_size,
             emb_id2ind, num_occs, device, only_prop, is_train=False,
-            label_samples=label_samples, use_tbow=use_tbow, use_anc=use_ancestor,
-            num_occs_label=num_occs_label)
+            label_samples=label_samples, label_tensors=label_tensors,
+            use_tbow=use_tbow, use_sent=use_sent, use_anc=use_ancestor, num_occs_label=num_occs_label)
 
         train_metric, train_ranks, train_pred_label, _ = accuracy_nway(
             train_pred, ind2label=ind2label, topk=acc_topk, num_classes=len(label2ind))
@@ -708,12 +739,15 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         test_metric, test_ranks, test_pred_label, _ = accuracy_nway(
             test_pred, ind2label=ind2label, topk=acc_topk, num_classes=len(label2ind))
 
+        if lr_decay:
+            scheduler.step(dev_metric)
+
         print('train: {:>.3f}, {:>.3f} dev: {:>.3f}, {:>.3f} test: {:>.3f}, {:>.3f}'.format(
             np.mean(train_loss), train_metric,
             np.mean(dev_loss), dev_metric,
             np.mean(test_loss), test_metric))
 
-        if early_stop and last_metric and last_metric > dev_metric:
+        if early_stop and last_metric and last_metric >= dev_metric:
             last_count += 1
             if last_count >= early_stop:
                 print('early stop')
@@ -721,13 +755,13 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         last_metric = dev_metric
         metrics.append(test_metric)
 
-    # get top 10 rank
+    # get rank
     _, train_ranks, _, _ = accuracy_nway(
-        train_pred, ind2label=ind2label, topk=10, num_classes=len(label2ind))
+        train_pred, ind2label=ind2label, topk=None, num_classes=len(label2ind))
     _, dev_ranks, _, _ = accuracy_nway(
-        dev_pred, ind2label=ind2label, topk=10, num_classes=len(label2ind))
+        dev_pred, ind2label=ind2label, topk=None, num_classes=len(label2ind))
     _, test_ranks, _, _ = accuracy_nway(
-        test_pred, ind2label=ind2label, topk=10, num_classes=len(label2ind))
+        test_pred, ind2label=ind2label, topk=None, num_classes=len(label2ind))
 
     test_ranks = get_ranks(test_ranks, is_parent=is_parent, is_ancestor=is_ancestor)
     dev_ranks = get_ranks(dev_ranks, is_parent=is_parent, is_ancestor=is_ancestor)

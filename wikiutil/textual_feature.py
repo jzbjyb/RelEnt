@@ -110,6 +110,7 @@ def property_level_todata(pid2context,
     train_samples = read_nway_file(os.path.join(data_dir, 'train.nway'))
     dev_samples = read_nway_file(os.path.join(data_dir, 'dev.nway'))
     test_samples = read_nway_file(os.path.join(data_dir, 'test.nway'))
+    label_samples = read_nway_file(os.path.join(data_dir, 'label2occs.nway'))
 
     subprops = read_subprop_file(subprop_file)
     pid2plabel = get_pid2plabel(subprops)
@@ -120,7 +121,7 @@ def property_level_todata(pid2context,
 
     found_words = set()
     all_words = set()
-    for split in ['train', 'dev', 'test']:
+    for split in ['train', 'label', 'dev', 'test']:
         samples = eval(split + '_samples')
         bow_file = os.path.join(data_dir, split + suffix)
         with open(bow_file, 'w') as fout:
@@ -137,9 +138,9 @@ def property_level_todata(pid2context,
                     for w, c in context:
                         all_words.add(w)
                         # add to vocab
-                        if split == 'train' and emb_file is None:
+                        if split in {'train', 'label'} and emb_file is None:
                             _ = emb_id2ind[w]
-                        if split == 'train' and extend_vocab and w not in emb_id2ind:
+                        if split in {'train', 'label'} and extend_vocab and w not in emb_id2ind:
                             emb_id2ind[w] = len(emb_id2ind)
                         # convert word to ind
                         if w in emb_id2ind:
@@ -156,9 +157,9 @@ def property_level_todata(pid2context,
                         for w in sent.split(' '):
                             all_words.add(w)
                             # add to vocab
-                            if split == 'train' and emb_file is None:
+                            if split in {'train', 'label'} and emb_file is None:
                                 _ = emb_id2ind[w]
-                            if split == 'train' and emb_file and w not in emb_id2ind:
+                            if split in {'train', 'label'} and emb_file and w not in emb_id2ind:
                                 emb_id2ind[w] = len(emb_id2ind)
                             # convert word to ind
                             if w in emb_id2ind:

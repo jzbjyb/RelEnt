@@ -21,7 +21,8 @@ class EmbModel(nn.Module):
                  vocab_size=None, tbow_emb_size=None, word_emb=None,
                  vocab_size2=None, tbow_emb_size2=None, word_emb2=None,
                  sent_vocab_size=None, sent_emb_size=None, sent_emb=None,
-                 only_tbow=False, use_weight=False, sent_emb_method='rnn_last'):
+                 only_tbow=False, use_weight=False,
+                 sent_emb_method='rnn_last', sent_hidden_size=16):
         super(EmbModel, self).__init__()
         self.padding_idx = padding_idx
         self.hidden_size = hidden_size
@@ -83,7 +84,7 @@ class EmbModel(nn.Module):
                 if sem.startswith('rnn_'):
                     self.num_rnn_layer = 1
                     self.num_rnn_direction = 2
-                    self.rnn_hidden_size = 16  # TODO: add param
+                    self.rnn_hidden_size = sent_hidden_size
                     self.rnn = nn.LSTM(sent_emb_size, self.rnn_hidden_size,
                                        num_layers=self.num_rnn_layer, bidirectional=self.num_rnn_direction == 2,
                                        batch_first=True)
@@ -91,7 +92,7 @@ class EmbModel(nn.Module):
                     if sem == 'rnn_last_mean':
                         input_size += sent_emb_size
                 elif sem.startswith('cnn_'):
-                    self.out_channel = 16  # TODO: add param
+                    self.out_channel = sent_hidden_size
                     self.kernel_size = 3
                     padding = (self.kernel_size - 1) // 2
                     self.conv = nn.Conv1d(sent_emb_size, self.out_channel, self.kernel_size, stride=1, padding=padding)
@@ -442,7 +443,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                   use_sent=0, sent_emb_size=50, sent_emb_file=None, sent_suffix='.sent',  # sent
                   only_tbow=False, renew_word_emb=False, output_pred=False, use_ancestor=False, filter_labels=False,
                   acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam', use_gnn=None,
-                  sent_emb_method='cnn_mean', lr_decay=0):
+                  sent_emb_method='cnn_mean', sent_hidden_size=16, lr_decay=0):
     subprops = read_subprop_file(subprop_file)
     pid2plabel = get_pid2plabel(subprops)
     subtrees, _ = get_all_subtree(subprops)
@@ -682,7 +683,8 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                          vocab_size=vocab_size, tbow_emb_size=tbow_emb_size, word_emb=word_emb,
                          vocab_size2=vocab_size2, tbow_emb_size2=tbow_emb_size2, word_emb2=word_emb2,
                          sent_vocab_size=sent_vocab_size, sent_emb_size=sent_emb_size, sent_emb=sent_emb,
-                         only_tbow=only_tbow, use_weight=use_weight, sent_emb_method=sent_emb_method)
+                         only_tbow=only_tbow, use_weight=use_weight,
+                         sent_emb_method=sent_emb_method, sent_hidden_size=sent_hidden_size)
     emb_model.to(device)
     if optimizer == 'adam':
         optimizer = torch.optim.Adam(emb_model.parameters(), lr=lr)

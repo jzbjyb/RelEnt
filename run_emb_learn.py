@@ -45,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--hidden_size', type=int, default=128)
+    parser.add_argument('--sent_hidden_size', type=int, default=16)
     parser.add_argument('--only_one_sample_per_prop', action='store_true')
     parser.add_argument('--filter_labels', action='store_true')
     parser.add_argument('--use_label', action='store_true')
@@ -105,6 +106,7 @@ if __name__ == '__main__':
         only_one_sample_per_prop=args.only_one_sample_per_prop,
         use_gnn=args.use_gnn,
         sent_emb_method=args.sent_emb_method,
+        sent_hidden_size=args.sent_hidden_size,
         lr_decay=args.lr_decay)
 
     print('final metrics: {}'.format(np.mean(metrics[-args.early_stop:])))

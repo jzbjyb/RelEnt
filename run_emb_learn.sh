@@ -42,6 +42,7 @@ early_stop=50
 lr_decay=25
 epoch=500
 num_occs=200
+sent_hidden_size=32
 
 #for seed in 0 1 2 3 4 2019 1000 256 77 9541
 for seed in 2019 1000 256 77 9541
@@ -69,6 +70,7 @@ do
             --sent_emb_method ${method} \
             --use_label \
             --hidden_size ${hidden_size} \
+            --sent_hidden_size ${sent_hidden_size} \
             --batch_size ${batch_size} \
             --lr_decay ${lr_decay} \
             --save ${save}.${seed} \
@@ -90,6 +92,7 @@ do
             --filter_labels \
             --use_label \
             --hidden_size ${hidden_size} \
+            --sent_hidden_size ${sent_hidden_size} \
             --batch_size ${batch_size} \
             --lr_decay ${lr_decay} \
             --save ${save}.${seed} \
@@ -112,6 +115,7 @@ do
             --filter_labels \
             --use_label \
             --hidden_size ${hidden_size} \
+            --sent_hidden_size ${sent_hidden_size} \
             --batch_size ${batch_size} \
             --lr_decay ${lr_decay} \
             --save ${save}.${seed} \

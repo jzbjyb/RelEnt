@@ -21,7 +21,7 @@ class EmbModel(nn.Module):
                  vocab_size=None, tbow_emb_size=None, word_emb=None,
                  vocab_size2=None, tbow_emb_size2=None, word_emb2=None,
                  sent_vocab_size=None, sent_emb_size=None, sent_emb=None,
-                 only_tbow=False, use_weight=False,
+                 only_tbow=False, only_sent=False, use_weight=False,
                  sent_emb_method='rnn_last', sent_hidden_size=16):
         super(EmbModel, self).__init__()
         self.padding_idx = padding_idx
@@ -30,6 +30,7 @@ class EmbModel(nn.Module):
             torch.tensor(emb).float(), freeze=True, padding_idx=padding_idx)
         self.only_prop = only_prop
         self.only_tbow = only_tbow
+        self.only_sent = only_sent
         self.num_anc_class = num_anc_class
         self.use_weight = use_weight
         if only_prop:
@@ -43,28 +44,33 @@ class EmbModel(nn.Module):
             assert sem in {'avg', 'rnn_last', 'rnn_mean', 'rnn_last_mean', 'cnn_max', 'cnn_mean'}
         self.sent_emb_method = sent_emb_method
 
+        if self.only_tbow or self.only_sent:
+            input_size = 0
+
         if vocab_size:
+            input_size += tbow_emb_size
             if word_emb is not None:
                 self.tbow_emb = nn.Embedding.from_pretrained(
                     torch.tensor(word_emb).float(), freeze=True, padding_idx=padding_idx)
             else:
                 self.tbow_emb = nn.Embedding(vocab_size, tbow_emb_size, padding_idx=padding_idx)
-            self.tbow_key_ff = nn.Sequential(
-                nn.Dropout(p=dropout),
-                nn.Linear(input_size - tbow_emb_size, 128),
-                nn.ReLU(),
-                nn.Dropout(p=dropout),
-                nn.Linear(128, 64),
-                nn.BatchNorm1d(64)
-            )
-            self.tbow_value_ff = nn.Sequential(
-                nn.Dropout(p=dropout),
-                nn.Linear(tbow_emb_size, 128),
-                nn.ReLU(),
-                nn.Dropout(p=dropout),
-                nn.Linear(128, 64),
-                nn.BatchNorm1d(64)
-            )
+            if not self.only_tbow:
+                self.tbow_key_ff = nn.Sequential(
+                    nn.Dropout(p=dropout),
+                    nn.Linear(input_size - tbow_emb_size, 128),
+                    nn.ReLU(),
+                    nn.Dropout(p=dropout),
+                    nn.Linear(128, 64),
+                    nn.BatchNorm1d(64)
+                )
+                self.tbow_value_ff = nn.Sequential(
+                    nn.Dropout(p=dropout),
+                    nn.Linear(tbow_emb_size, 128),
+                    nn.ReLU(),
+                    nn.Dropout(p=dropout),
+                    nn.Linear(128, 64),
+                    nn.BatchNorm1d(64)
+                )
 
         if vocab_size2:
             if word_emb2 is not None:
@@ -72,6 +78,7 @@ class EmbModel(nn.Module):
                     torch.tensor(word_emb2).float(), freeze=True, padding_idx=padding_idx)
             else:
                 self.tbow_emb2 = nn.Embedding(vocab_size2, tbow_emb_size2, padding_idx=padding_idx)
+            input_size += tbow_emb_size2
 
         if sent_vocab_size:
             if sent_emb is not None:
@@ -282,10 +289,16 @@ class EmbModel(nn.Module):
 
         if sent_ind is not None and sent_count is not None:
             sent_emb = self.combine_sent_emb(self.sent_emb, sent_ind, sent_count)
-            emb = torch.cat([emb, sent_emb], -1)
             if self.use_label:
                 label_sent_emb = self.combine_sent_emb(self.sent_emb, label_sent_ind, label_sent_count)
-                label_emb = torch.cat([label_emb, label_sent_emb], -1)
+            if self.only_sent:
+                emb = sent_emb
+                if self.use_label:
+                    label_emb = label_sent_emb
+            else:
+                emb = torch.cat([emb, sent_emb], -1)
+                if self.use_label:
+                    label_emb = torch.cat([label_emb, label_sent_emb], -1)
 
         pred_repr = self.ff(emb)
 
@@ -441,7 +454,8 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                   use_tbow=0, tbow_emb_size=50, word_emb_file=None, suffix='.tbow',  # tbow 1
                   use_tbow2=0, tbow_emb_size2=50, word_emb_file2=None, suffix2='.tbow',  # tbow 2
                   use_sent=0, sent_emb_size=50, sent_emb_file=None, sent_suffix='.sent',  # sent
-                  only_tbow=False, renew_word_emb=False, output_pred=False, use_ancestor=False, filter_labels=False,
+                  only_tbow=False, only_sent=False, renew_word_emb=False, output_pred=False,
+                  use_ancestor=False, filter_labels=False,
                   acc_topk=1, use_weight=False, only_one_sample_per_prop=False, optimizer='adam', use_gnn=None,
                   sent_emb_method='cnn_mean', sent_hidden_size=16, lr_decay=0):
     subprops = read_subprop_file(subprop_file)
@@ -683,7 +697,7 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
                          vocab_size=vocab_size, tbow_emb_size=tbow_emb_size, word_emb=word_emb,
                          vocab_size2=vocab_size2, tbow_emb_size2=tbow_emb_size2, word_emb2=word_emb2,
                          sent_vocab_size=sent_vocab_size, sent_emb_size=sent_emb_size, sent_emb=sent_emb,
-                         only_tbow=only_tbow, use_weight=use_weight,
+                         only_tbow=only_tbow, only_sent=only_sent, use_weight=use_weight,
                          sent_emb_method=sent_emb_method, sent_hidden_size=sent_hidden_size)
     emb_model.to(device)
     if optimizer == 'adam':

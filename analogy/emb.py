@@ -86,6 +86,12 @@ def sim_func(child_emb, parent_emb, method='cosine', sigma=1.0,
         parent_emb = np.mean(parent_emb, 0)
         return -np.mean(euclidean_distances([child_emb], [parent_emb]))
 
+    if method == 'avg_dot':
+        child_emb = np.mean(child_emb, 0)
+        parent_emb = np.mean(parent_emb, 0)
+        sim = (child_emb * parent_emb).sum()
+        return sim
+
     if method == 'kde':
         if kde_c is None:
             kde_c = KernelDensity(kernel='gaussian', bandwidth=sigma).fit(child_emb)

@@ -5,8 +5,10 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-subprop_file=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph10_sample5_parent_occ_popu/subprops
+subprop_file=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph100_sample5_parent_occ_popu/subprops
 data_dir_main="data_new/analogy_dataset/split_middle_overlap_dedup_nocommonchild/"
+
+top=10
 
 for method in avg kde
 do
@@ -25,7 +27,7 @@ do
                 --method ${method} \
                 --num_workers 8 \
                 --filter_num_poccs 0 \
-                --top 10 \
+                --top ${top} \
                 --seed 2019 \
                 --sigma 0.1 \
                 --use_norm
@@ -43,7 +45,7 @@ do
                 --method avg \
                 --num_workers 8 \
                 --filter_num_poccs 0 \
-                --top 10 \
+                --top ${top} \
                 --seed 2019 \
                 --sigma 0.1 \
                 --use_norm \

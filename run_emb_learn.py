@@ -51,6 +51,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_label', action='store_true')
     parser.add_argument('--use_gnn', type=str, default=None)
     parser.add_argument('--sent_emb_method', type=str, default='cnn_mean')
+    parser.add_argument('--only_text', action='store_true')
 
     args = parser.parse_args()
 
@@ -97,7 +98,8 @@ if __name__ == '__main__':
         sent_emb_size=args.sent_emb_size,
         sent_emb_file=args.sent_emb_file,
         sent_suffix=args.sent_suffix,
-        only_tbow=False,
+        only_tbow=args.only_text,
+        only_sent=args.only_text,
         renew_word_emb=False,
         output_pred=False,
         use_ancestor=False,

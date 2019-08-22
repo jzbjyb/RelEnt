@@ -43,6 +43,7 @@ lr_decay=25
 epoch=500
 num_occs=200
 sent_hidden_size=32
+lr=0.001
 
 #for seed in 0 1 2 3 4 2019 1000 256 77 9541
 for seed in 2019 1000 256 77 9541
@@ -61,7 +62,7 @@ do
             --sent_emb_file ${sent_emb_file} \
             --sent_suffix ${sent_suffix} \
             --num_occs ${num_occs} \
-            --lr 0.001 \
+            --lr ${lr} \
             --epoch ${epoch} \
             --early_stop ${early_stop} \
             --seed ${seed} \
@@ -84,7 +85,7 @@ do
             --use_tbow ${use_tbow} \
             --suffix ${suffix} \
             --num_occs ${num_occs} \
-            --lr 0.001 \
+            --lr ${lr} \
             --epoch ${epoch} \
             --early_stop ${early_stop} \
             --seed ${seed} \
@@ -107,7 +108,7 @@ do
             --use_tbow ${use_tbow} \
             --suffix ${suffix} \
             --num_occs ${num_occs} \
-            --lr 0.001 \
+            --lr ${lr} \
             --epoch ${epoch} \
             --early_stop ${early_stop} \
             --seed ${seed} \

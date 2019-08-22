@@ -763,13 +763,14 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
             np.mean(dev_loss), dev_metric,
             np.mean(test_loss), test_metric))
 
+        metrics.append(test_metric)
+
         if early_stop and last_metric and last_metric >= dev_metric:
             last_count += 1
             if last_count >= early_stop:
                 print('early stop')
                 break
         last_metric = dev_metric
-        metrics.append(test_metric)
 
     # get rank
     _, train_ranks, _, _ = accuracy_nway(

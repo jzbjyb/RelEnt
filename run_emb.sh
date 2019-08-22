@@ -8,7 +8,7 @@ set -e
 subprop_file=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph100_sample5_parent_occ_popu/subprops
 data_dir_main="data_new/analogy_dataset/split_middle_overlap_dedup_nocommonchild/"
 
-top=10
+top=50
 
 for method in avg kde
 do

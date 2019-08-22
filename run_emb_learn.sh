@@ -9,7 +9,8 @@ text=$1
 type=$2
 use_tbow=$3
 method=$4
-save=$5
+num_occs=$5
+save=$6
 
 dataset_dir=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph100_sample5_parent_occ_popu_label/
 subprop_file=data_new/property_occurrence_prop435k_split_dedup/subprops_random
@@ -41,7 +42,6 @@ hidden_size=256
 early_stop=50
 lr_decay=25
 epoch=500
-num_occs=200
 sent_hidden_size=32
 lr=0.001
 
@@ -97,7 +97,7 @@ do
             --batch_size ${batch_size} \
             --lr_decay ${lr_decay} \
             --save ${save}.${seed} \
-            --no_cuda
+            #--no_cuda
     else
         python run_emb_learn.py \
             --dataset_dir ${dataset_dir} \

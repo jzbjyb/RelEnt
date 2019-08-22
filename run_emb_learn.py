@@ -59,9 +59,7 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    input_size = args.emb_size * 2 + \
-                 (args.word_emb_size if args.use_tbow else 0) + \
-                 (args.word_emb_size2 if args.use_tbow2 else 0)
+    input_size = args.emb_size * 2
     subprops = read_subprop_file(args.subprop_file)
     pid2plabel = get_pid2plabel(subprops)
     label2ind = load_tsv_as_dict(os.path.join(args.dataset_dir, 'label2ind.txt'), valuefunc=str)

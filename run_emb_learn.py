@@ -52,6 +52,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_gnn', type=str, default=None)
     parser.add_argument('--sent_emb_method', type=str, default='cnn_mean')
     parser.add_argument('--only_text', action='store_true')
+    parser.add_argument('--save_all', action='store_true')
 
     args = parser.parse_args()
 
@@ -116,4 +117,4 @@ if __name__ == '__main__':
         if not os.path.exists(os.path.dirname(args.save)):
             os.makedirs(os.path.dirname(args.save), exist_ok=True)
         rank_to_csv(test_ranks, args.save, key2name=pid2plabel,
-                    simple_save=True, label2ind=label2ind)
+                    simple_save=not args.save_all, label2ind=label2ind)

@@ -4,7 +4,7 @@
 #SBATCH --output=slurm_out/slurm-%j.out
 set -e
 
-data_dir=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph100_sample5_parent_occ_popu_label/
+data_dir=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph1000_sample5_parent_occ_popu/
 subprop_file=data_new/property_occurrence_prop435k_split_dedup/subprops_random
 emb_file=data/emb/glove.6B.50d.txt
 pid2snippet_file=data_new/textual/wikipedia_sling/pid2snippet.pkl

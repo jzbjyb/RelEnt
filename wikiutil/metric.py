@@ -353,12 +353,13 @@ def accuracy_pointwise(predictions: List[Tuple[str, str, float, int]], method='m
 
 
 def rank_to_csv(ranks: Dict[str, List], filepath: str, key2name: Dict[str, str] = None,
-                simple_save=False, label2ind=None):
+                simple_save=False, label2ind=None, topk=10):
     def doc_formatter(docid: str, score: float, comment: str):
         if key2name is not None:
             docid = key2name[docid]
         return ' '.join(['"' + docid + '"', '{:.2f}'.format(score), comment])
     max_num_docs = np.max([len(r) for q, r in ranks.items()])
+    max_num_docs = min(max_num_docs, topk)
     with open(filepath, 'w') as fout:
         if not simple_save:
             fout.write('query,' + ','.join(map(lambda x: 'pos_' + str(x), range(max_num_docs))) + '\n')
@@ -367,7 +368,7 @@ def rank_to_csv(ranks: Dict[str, List], filepath: str, key2name: Dict[str, str] 
                 if key2name is not None:
                     q = key2name[q]
                 fout.write('"{}"'.format(q) + ',')
-                fout.write(','.join(map(lambda x: doc_formatter(*x), r)))
+                fout.write(','.join(map(lambda x: doc_formatter(*x), r[:max_num_docs])))
             else:
                 li = [q] + [label2ind[docid] for docid, _, _ in r]
                 fout.write(','.join(li))

@@ -7,7 +7,7 @@ import random
 import os
 import numpy as np
 import torch
-from wikiutil.util import read_embeddings_from_text_file
+from wikiutil.util import read_embeddings_from_text_file, load_tsv_as_dict
 from wikiutil.metric import rank_to_csv
 from wikiutil.property import read_subprop_file, get_pid2plabel
 from analogy.emb import compute_overlap
@@ -41,6 +41,7 @@ if __name__ == '__main__':
         args.emb_file, debug=False, emb_size=200, use_padding=True)
     subprops = read_subprop_file(args.subprop_file)
     pid2plabel = get_pid2plabel(subprops)
+    label2ind = load_tsv_as_dict(os.path.join(args.dataset_dir, 'label2ind.txt'), valuefunc=str)
 
     ranks = compute_overlap(
         args.dataset_dir,
@@ -64,6 +65,7 @@ if __name__ == '__main__':
         use_norm=args.use_norm)
 
     if args.save:
-        if not os.path.exists(args.save):
-            os.mkdir(args.save)
-        rank_to_csv(ranks, os.path.join(args.save, 'ranks.csv'), key2name=pid2plabel)
+        if not os.path.exists(os.path.dirname(args.save)):
+            os.makedirs(os.path.dirname(args.save), exist_ok=True)
+        rank_to_csv(ranks, args.save, key2name=pid2plabel,
+                    simple_save=True, label2ind=label2ind)

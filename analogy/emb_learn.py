@@ -240,6 +240,13 @@ class EmbModel(nn.Module):
         return sent_emb
 
 
+    def get_refine_emb(self, head, tail):
+        head_emb, tail_emb = self.avg_emb(head), self.avg_emb(tail)
+        emb = torch.cat([head_emb, tail_emb], -1)
+        pred_repr = self.ff(emb)
+        return pred_repr
+
+
     def forward(self, head, tail, labels,
                 tbow_ind=None, tbow_count=None, anc_labels=None,
                 tbow_ind2=None, tbow_count2=None, sent_ind=None, sent_count=None,
@@ -789,4 +796,4 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
             with open(os.path.join(data_dir, fn + '.pred'), 'w') as fout:
                 for pl in eval('{}_pred_label'.format(fn)):
                     fout.write('{}\n'.format(pl))
-    return metrics, test_ranks, dev_ranks, train_ranks
+    return metrics, test_ranks, dev_ranks, train_ranks, emb_model

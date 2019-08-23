@@ -65,7 +65,7 @@ if __name__ == '__main__':
     pid2plabel = get_pid2plabel(subprops)
     label2ind = load_tsv_as_dict(os.path.join(args.dataset_dir, 'label2ind.txt'), valuefunc=str)
 
-    metrics, test_ranks, dev_ranks, train_ranks = run_emb_train(
+    metrics, test_ranks, dev_ranks, train_ranks, model = run_emb_train(
         args.dataset_dir,
         args.emb_file,
         args.subprop_file,
@@ -112,6 +112,8 @@ if __name__ == '__main__':
 
     print('final metrics: {}'.format(np.mean(metrics[-args.early_stop:])))
     print('last metrics: {}'.format(metrics[-1]))
+
+    torch.save(model, 'model/exp/base')
 
     if args.save:
         if not os.path.exists(os.path.dirname(args.save)):

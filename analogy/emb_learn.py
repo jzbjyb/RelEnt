@@ -163,7 +163,8 @@ class EmbModel(nn.Module):
     def combine_sent_emb(self,
                          lookup,
                          sent_ind,  # SHAPE: (batch_size, num_sent, num_words)
-                         sent_count):  # SHAPE: (batch_size, num_sent)
+                         sent_count,
+                         rnn):  # SHAPE: (batch_size, num_sent)
         bs, ns, nw = sent_ind.size()
         # SHAPE: (batch_size * num_sent, num_words)
         sent_ind = sent_ind.view(-1, nw)
@@ -182,7 +183,7 @@ class EmbModel(nn.Module):
         for sem in self.sent_emb_method:
             if sem.startswith('rnn_'):
                 packed_sent_emb = pack_padded_sequence(sent_emb_inp, sent_len, batch_first=True, enforce_sorted=False)
-                output, (last_h, last_c) = self.rnn(packed_sent_emb)
+                output, (last_h, last_c) = rnn(packed_sent_emb)
                 if sem == 'rnn_mean':
                     output, _ = pad_packed_sequence(output, batch_first=True)
                     output = output.view(bs * ns, nw, self.num_rnn_direction * self.rnn_hidden_size)
@@ -295,9 +296,9 @@ class EmbModel(nn.Module):
                     label_emb = torch.cat([label_emb, label_tbow_emb], -1)
 
         if sent_ind is not None and sent_count is not None:
-            sent_emb = self.combine_sent_emb(self.sent_emb, sent_ind, sent_count)
+            sent_emb = self.combine_sent_emb(self.sent_emb, sent_ind, sent_count, self.rnn)
             if self.use_label:
-                label_sent_emb = self.combine_sent_emb(self.sent_emb, label_sent_ind, label_sent_count)
+                label_sent_emb = self.combine_sent_emb(self.sent_emb, label_sent_ind, label_sent_count, self.rnn)
             if self.only_sent:
                 emb = sent_emb
                 if self.use_label:
@@ -608,6 +609,8 @@ def run_emb_train(data_dir, emb_file, subprop_file, use_label=False, filter_leav
         label_samples = read_nway_file(os.path.join(data_dir, 'label2occs.nway'))
         label_samples_dict: Dict[int, List] = defaultdict(list)
         for (pid, occs), l in label_samples:
+            occs = list(occs)
+            shuffle(occs)  # TODO: better than shuffle?
             label_samples_dict[l].extend(occs)
         label_samples = [((ind2label[l], label_samples_dict[l]), l) for l in sorted(label_samples_dict.keys())]
         label_samples_li = [label_samples]

@@ -25,12 +25,15 @@ if __name__ == '__main__':
 
     parser.add_argument('--out', type=str, default=None)
     parser.add_argument('--suffix', type=str, default=None)
+    parser.add_argument('--property_population', action='store_true')
 
     args = parser.parse_args()
 
     if args.dep_dir:
         dep_prep(args.dep_dir, args.subprop_file, data_dir=args.data_dir,
-                 output=args.out, suffix=args.suffix, emb_file=args.emb_file)
+                 output=args.out, suffix=args.suffix, emb_file=args.emb_file,
+                 popu=args.property_population)
     elif args.pid2snippet_file:
         middle_prep(args.pid2snippet_file, args.subprop_file, data_dir=args.data_dir, entityid2name_file=None,
-                    output=args.out, suffix=args.suffix, emb_file=args.emb_file)
+                    output=args.out, suffix=args.suffix, emb_file=args.emb_file,
+                    popu=args.property_population)

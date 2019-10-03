@@ -12,8 +12,8 @@ method=$4
 num_occs=$5
 save=$6
 
-#dataset_dir=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph1000_sample5_parent_occ_popu/
-dataset_dir=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph100_sample5_parent_occ_popu_label/
+dataset_dir=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph1000_sample1_parent_occ_popu/
+#dataset_dir=data_new/analogy_dataset/split_middle_dedup_nocommonchild_by_entail_nway_subgraph100_sample5_parent_occ_popu_label/
 subprop_file=data_new/property_occurrence_prop435k_split_dedup/subprops_random
 emb_file=../pytorch_big_graph/emb_new_dedup_shuf_default/transe.txt
 #word_emb_file='data/emb/glove.6B.50d.txt'

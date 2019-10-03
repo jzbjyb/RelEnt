@@ -8,8 +8,8 @@ import string
 import spacy
 import pickle
 import numpy as np
-from .property import read_subprop_file, get_pid2plabel
-from .util import read_embeddings_from_text_file
+from .property import read_subprop_file, get_pid2plabel, get_all_subtree
+from .util import read_embeddings_from_text_file, load_tsv_as_list
 from .data import read_nway_file
 
 
@@ -196,13 +196,14 @@ def property_level_todata(pid2context,
                 fout.write('{} {}\n'.format(emb_ind2id[i], ' '.join(map(lambda x: '{:.2f}'.format(x), e))))
 
 
-def dep_prep(dep_dir, subprop_file, data_dir=None, output=False, suffix=None, emb_file=None):
+def dep_prep(dep_dir, subprop_file, data_dir=None, output=False, suffix=None, emb_file=None, popu=False):
     if suffix and not suffix.startswith('.'):
         raise Exception
     assert output in {False, 'all', 'bow', 'sent'}
 
     subprops = read_subprop_file(subprop_file)
     pid2plabel = get_pid2plabel(subprops)
+    subtrees, isolate = get_all_subtree(subprops)
 
     pid2dep: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(lambda: 0))
     for root, dirs, files in tqdm(os.walk(dep_dir)):
@@ -247,6 +248,15 @@ def dep_prep(dep_dir, subprop_file, data_dir=None, output=False, suffix=None, em
     for pid, dep in sorted(pid2context.items(), key=itemgetter(0)):
         print(pid2plabel[pid], len(dep), sorted(dep.items(), key=lambda x: -x[1])[0])
 
+    if popu:
+        print('use population')
+        new_pid2context = {}
+        filter_pids = set(map(itemgetter(0), load_tsv_as_list(os.path.join(data_dir, 'test.prop'))))
+        filter_pids |= set(map(itemgetter(0), load_tsv_as_list(os.path.join(data_dir, 'dev.prop'))))
+        for subtree in subtrees:
+            subtree.populate_textfeat(pid2context, new_pid2context, include_self=True, filter_pids=filter_pids)
+        pid2context = new_pid2context
+
     if output == 'all':
         property_level_todata(
             pid2context,
@@ -277,7 +287,8 @@ def dep_prep(dep_dir, subprop_file, data_dir=None, output=False, suffix=None, em
         )
 
 
-def middle_prep(pid2snippet_file, subprop_file, data_dir=None, entityid2name_file=None, output=False, suffix=None, emb_file=None):
+def middle_prep(pid2snippet_file, subprop_file, data_dir=None, entityid2name_file=None, output=False,
+                suffix=None, emb_file=None, popu=False):
     if suffix and not suffix.startswith('.'):
         raise Exception
     assert output in {False, 'all', 'bow', 'sent'}
@@ -289,6 +300,7 @@ def middle_prep(pid2snippet_file, subprop_file, data_dir=None, entityid2name_fil
     else:
         entityid2name = None
     pid2plabel = get_pid2plabel(subprops, entityid2name)
+    subtrees, isolate = get_all_subtree(subprops)
 
     with open(pid2snippet_file, 'rb') as fin:
         pid2snippet = pickle.load(fin)
@@ -323,6 +335,15 @@ def middle_prep(pid2snippet_file, subprop_file, data_dir=None, entityid2name_fil
         print(pid2plabel[pid])
         print(snippets[:5])
         print()
+
+    if popu:
+        print('use population')
+        new_pid2context = {}
+        filter_pids = set(map(itemgetter(0), load_tsv_as_list(os.path.join(data_dir, 'test.prop'))))
+        filter_pids |= set(map(itemgetter(0), load_tsv_as_list(os.path.join(data_dir, 'dev.prop'))))
+        for subtree in subtrees:
+            subtree.populate_textfeat(pid2context, new_pid2context, include_self=True, filter_pids=filter_pids)
+        pid2context = new_pid2context
 
     if output == 'all':
         property_level_todata(

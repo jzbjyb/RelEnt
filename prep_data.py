@@ -290,7 +290,9 @@ if __name__ == '__main__':
         # save parent property occurrences
         with open(os.path.join(args.out_dir, 'label2occs.nway'), 'w') as fout:
             for label, ind in label2ind.items():
-                self_and_childs = [label] + [p for p in train_prop if (label, p) in is_parent]
+                # because all the properties have been populated, we don't need to do it here
+                #self_and_childs = [label] + [p for p in train_prop if (label, p) in is_parent]
+                self_and_childs = [label]
                 fout.write('{}\t{}'.format(ind, label))
                 for i, p in enumerate(self_and_childs):
                     po = list(poccs.get_all_occs(p, 1))[0]

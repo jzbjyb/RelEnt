@@ -675,31 +675,82 @@ class PropertySubtree():
     def populate_subtree(subtree: Tuple[str, List],
                          pid2occs: Dict[str, List[Tuple]],
                          new_pid2occs: Dict[str, set],
-                         include_self: bool = True):
+                         include_self: bool = True,
+                         filter_pids: set = None):
         parent, childs = subtree
         if len(childs) == 0:  # leaf node
             if parent in pid2occs:
                 new_pid2occs[parent] = set(pid2occs[parent])
             return
         for child in childs:  # none-leaf node, go deeper
-            PropertySubtree.populate_subtree(child, pid2occs, new_pid2occs, include_self=include_self)
+            PropertySubtree.populate_subtree(child, pid2occs, new_pid2occs,
+                                             include_self=include_self, filter_pids=filter_pids)
         # aggregate occs of childs
         childs_occs = set()
         for child in childs:
             if child[0] not in new_pid2occs:
                 continue
+            if child[0] in filter_pids:
+                continue  # skip filtered pids (usually test/dev properties)
             childs_occs.update(new_pid2occs[child[0]])
         if include_self and parent in pid2occs:
             childs_occs.update(pid2occs[parent])
         if len(childs_occs) > 0:
-            new_pid2occs[parent] = childs_occs
+            if parent in new_pid2occs:  # this node has multiple parents
+                new_pid2occs[parent] = new_pid2occs[parent] | childs_occs
+            else:
+                new_pid2occs[parent] = childs_occs
+
+
+    @staticmethod
+    def populate_textfeat_subtree(subtree: Tuple[str, List],
+                                  pid2context: Dict[str, Dict[str, int]],
+                                  new_pid2context: Dict[str, Dict[str, int]],
+                                  include_self: bool = True,
+                                  filter_pids: set = None):
+        parent, childs = subtree
+        if len(childs) == 0:  # leaf node
+            if parent in pid2context:
+                new_pid2context[parent] = deepcopy(pid2context[parent])
+            return
+        for child in childs:  # none-leaf node, go deeper
+            PropertySubtree.populate_textfeat_subtree(
+                child, pid2context, new_pid2context, include_self=include_self, filter_pids=filter_pids)
+        # aggregate occs of childs
+        childs_context: Dict[str, int] = defaultdict(lambda: 0)
+        for child in childs:
+            if child[0] not in new_pid2context:
+                continue
+            if child[0] in filter_pids:
+                continue  # skip filtered pids (usually test/dev properties)
+            for k, v in new_pid2context[child[0]].items():
+                childs_context[k] += v
+        if include_self and parent in pid2context:
+            for k, v in pid2context[parent].items():
+                childs_context[k] += v
+        if parent in new_pid2context:  # this node has multiple parents
+            for k, v in new_pid2context[parent].items():
+                childs_context[k] += v
+        if len(childs_context) > 0:
+            new_pid2context[parent] = dict(childs_context)
 
 
     def populate(self,
                  pid2occs: Dict[str, List[Tuple]],
                  new_pid2occs: Dict[str, set],
-                 include_self: bool = True):
-        PropertySubtree.populate_subtree(self.tree, pid2occs, new_pid2occs, include_self=include_self)
+                 include_self: bool = True,
+                 filter_pids: set = None):
+        PropertySubtree.populate_subtree(self.tree, pid2occs, new_pid2occs,
+                                         include_self=include_self, filter_pids=filter_pids)
+
+
+    def populate_textfeat(self,
+                          pid2context: Dict[str, Dict[str, int]],
+                          new_pid2context: Dict[str, Dict[str, int]],
+                          include_self: bool = True,
+                          filter_pids: set = None):
+        PropertySubtree.populate_textfeat_subtree(
+            self.tree, pid2context, new_pid2context, include_self=include_self, filter_pids=filter_pids)
 
 
     @staticmethod
@@ -837,6 +888,9 @@ class PropertyOccurrence():
                  num_occ_per_subgraph: int = 1):
         self.pid2occs = pid2occs
         self.num_occ_per_subgraph = num_occ_per_subgraph
+        # shuffle occs
+        for k in pid2occs:
+            shuffle(pid2occs[k])
         self._pid2multioccs = dict((pid, self.group_occs(pid, num_occ_per_subgraph)) for pid in pid2occs)
 
 
@@ -896,6 +950,7 @@ class PropertyOccurrence():
                     pid2occs, subtree.tree, new_pid2occs, populate_method='combine_child')
             pid2occs = dict((k, list(v)) for k, v in new_pid2occs.items())
         elif populate_method == 'top_down':
+            ''' # no need to remove common child and filter pids
             print('remove common childs')
             remove_common_child(subtrees)
             if filter_pids is not None:
@@ -906,9 +961,11 @@ class PropertyOccurrence():
                 subtrees = [subtree for subtree in subtrees if subtree is not None]
                 print('#nodes after: {}'.format(
                     np.sum([len(subtree.nodes) for subtree in subtrees])))
+            '''
             print('populate properties top_down')
             new_pid2occs: Dict[str, set] = {}
-            PropertyOccurrence.top_down_complete(pid2occs, subtrees, new_pid2occs)
+            PropertyOccurrence.top_down_complete(
+                pid2occs, subtrees, new_pid2occs, filter_pids=filter_pids, remove_overlap=False)
             pid2occs_ = dict((k, list(v)) for k, v in new_pid2occs.items())
             if filter_pids is not None:  # the others are unchanged
                 pid2occs.update(pid2occs_)
@@ -966,18 +1023,21 @@ class PropertyOccurrence():
     @staticmethod
     def top_down_complete(pid2occs: Dict[str, List[Tuple]],
                           subtrees: List[PropertySubtree],
-                          new_pid2occs: Dict[str, set]):
+                          new_pid2occs: Dict[str, set],
+                          filter_pids: set = None,
+                          remove_overlap: bool = True):
         # first collect all the occurrences from the bottom to the top
         # then avoid overlap in a top down manner so that
         # all the ancestors have no overlap with a certain child
 
         # bottom-up collection
         for subtree in subtrees:
-            subtree.populate(pid2occs, new_pid2occs, include_self=True)
+            subtree.populate(pid2occs, new_pid2occs, include_self=True, filter_pids=filter_pids)
 
-        # top-down overlap removing
-        for subtree in subtrees:
-            subtree.avoid_overlap(new_pid2occs)
+        if remove_overlap:
+            # top-down overlap removing
+            for subtree in subtrees:
+                subtree.avoid_overlap(new_pid2occs)
 
 
     @property

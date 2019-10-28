@@ -1209,6 +1209,97 @@ def remove_dup_between_child_ancestor(args):
             shutil.copy(os.path.join(prop_occ_dir, pid + '.txt'), os.path.join(args.out, pid + '.txt'))
 
 
+
+def get_middle_words_pattern(args, dist_thres, max_num_sent=None, max_token=None):
+    prop_occ_dir, subprop_file, sling_doc_file, sling_token_file, vocab_file = args.inp.split(':')
+
+    subprops = read_subprop_file(subprop_file)
+    pid2plabel = get_pid2plabel(subprops)
+
+    all_pids = set([p[0][0] for p in subprops])
+    print('totally {} pids'.format(len(all_pids)))
+
+    # load property occurrences
+    poccs = PropertyOccurrence.build(sorted(all_pids), prop_occ_dir, max_occ_per_prop=int(1e6))
+    print('totally {} pids with occs'.format(len(poccs.pid2occs)))
+
+    # build <hid, tid> to pid mapping:
+    ht2pid: Dict[Tuple[str, str], str] = {}
+    for pid, occs in tqdm(poccs.pid2occs.items()):
+        for hid, tid in occs:
+            ht2pid[(hid, tid)] = pid
+
+    start_time = time.time()
+    # build context position
+    print('build context position')
+    sid2pos: Dict[int, Dict[str, set]] = defaultdict(lambda: defaultdict(set))
+    wdid2cout: Dict[str, int] = defaultdict(lambda: 0)
+    with open(sling_doc_file, 'r') as fin:
+        for i, l in tqdm(enumerate(fin)):
+            if i >= 10000:
+                break
+            doc = l.strip().split('\t')
+            sid = int(doc[0])
+            mentions = []
+            for m in doc[1:]:
+                start, end, wdid = m.split(' ')
+                mentions.append((int(start), int(end), wdid))
+            for i in range(len(mentions)):
+                if max_num_sent and wdid2cout[mentions[i][2]] >= max_num_sent:
+                    continue
+                wdid2cout[mentions[i][2]] += 1
+                for j in range(i + 1, min(i + 1 + 5, len(mentions))):  # see the successive 5 mentions
+                    if max_num_sent and wdid2cout[mentions[j][2]] >= max_num_sent:
+                        continue
+                    if mentions[j][0] - mentions[i][1] > dist_thres:
+                        break
+                    for h, t, direction in [(i, j, 1), (j, i, -1)]:
+                        hstart, hend, hid = mentions[h]
+                        tstart, tend, tid = mentions[t]
+                        if (hid, tid) in ht2pid:  # TODO: hid and tid could be the same
+                            start = min(hend, tend)
+                            end = max(hstart, tstart)
+                            pid = ht2pid[(hid, tid)]
+                            if end - start > 0 and end - start <= dist_thres:
+                                sid2pos[sid][pid].add((start, end, direction))
+    print('totally {} sent'.format(len(sid2pos)))
+
+    # load vocab
+    wid2token = dict((v, k) for k, v in load_tsv_as_dict(vocab_file, valuefunc=int).items())
+
+    # build context
+    print('build context')
+    pid2context: Dict[str, Dict[Tuple[str, int], int]] = defaultdict(lambda: defaultdict(lambda: 0))
+    with open(sling_token_file, 'r') as fin:
+        for i, l in tqdm(enumerate(fin)):
+            sid, tokens = l.rstrip('\n').split('\t')
+            sid = int(sid)
+            if sid not in sid2pos:
+                continue
+            if i >= 1000000:
+                break
+            tokens = list(map(int, tokens.split(' ')))
+            for pid, pos in sid2pos[sid].items():
+                for start, end, direction in pos:
+                    snippet = ' '.join(map(lambda w: wid2token[w], tokens[start:end]))
+                    if max_token and (snippet, direction) not in pid2context[pid] and len(pid2context[pid]) > max_token:
+                        continue
+                    pid2context[pid][(snippet, direction)] += 1
+
+    print('time_cost: {}'.format(time.time() - start_time))
+
+    # output
+    pid2context = dict((pid, dict(wd)) for pid, wd in pid2context.items() if len(wd) > 0)
+    print('{} out of {} properties have context'.format(len(set(pid2context)), len(set(poccs.pid2occs))))
+    print('have: {}'.format(list(pid2context.keys())[:10]))
+    print('not have: {}'.format(list(all_pids - set(pid2context.keys()))[:10]))
+    for pid, wd in pid2context.items():
+        print(pid2plabel[pid], sorted(wd.items(), key=lambda x: -x[1])[:5], len(wd))
+
+    with open(os.path.join(args.out), 'wb') as fout:
+        pickle.dump(pid2context, fout)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('process wikidata property')
     parser.add_argument('--task', type=str,
@@ -1229,7 +1320,7 @@ if __name__ == '__main__':
                                  'property_level_bow_sling_on_alldocs',
                                  'remove_dup_between_child_ancestor',
                                  'get_entity_occ_by_sling',
-                                 'get_entity_occ_dep_by_sling'], required=True)
+                                 'get_entity_occ_dep_by_sling', 'get_middle_words_pattern'], required=True)
     parser.add_argument('--inp', type=str, required=None)
     parser.add_argument('--out', type=str, default=None)
     args = parser.parse_args()
@@ -1338,3 +1429,14 @@ if __name__ == '__main__':
         property_level_bow_sling_on_alldocs(args, dist_thres=10, max_num_sent=None, split_token=False, max_token=10000)
     elif args.task == 'remove_dup_between_child_ancestor':
         remove_dup_between_child_ancestor(args)
+    elif args.task == 'get_middle_words_pattern':
+        '''
+        python prop.py --task get_middle_words_pattern 
+        --inp data/property_occurrence_all/:
+        data/subprops.txt:
+        data_new/textual/wikipedia_sling/sent2mention.tsv:
+        data/textual/wikipedia_sling/tokens/wp_tokens.txt:
+        data/textual/wikipedia_sling/tokens/vocab.tsv 
+        --out data_new/textual/wikipedia_sling/haha_pid2snippet.pkl
+        '''
+        get_middle_words_pattern(args, dist_thres=10, max_num_sent=None, max_token=10000)

@@ -1236,8 +1236,6 @@ def get_middle_words_pattern(args, dist_thres, max_num_sent=None, max_token=None
     wdid2cout: Dict[str, int] = defaultdict(lambda: 0)
     with open(sling_doc_file, 'r') as fin:
         for i, l in tqdm(enumerate(fin)):
-            if i >= 10000:
-                break
             doc = l.strip().split('\t')
             sid = int(doc[0])
             mentions = []
@@ -1276,8 +1274,6 @@ def get_middle_words_pattern(args, dist_thres, max_num_sent=None, max_token=None
             sid = int(sid)
             if sid not in sid2pos:
                 continue
-            if i >= 1000000:
-                break
             tokens = list(map(int, tokens.split(' ')))
             for pid, pos in sid2pos[sid].items():
                 for start, end, direction in pos:

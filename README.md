@@ -1,3 +1,7 @@
+This repository contains dataset and code for the following paper:
+
+[Learning Relation Entailment with Structured and Textual Information (AKBC2020)](https://openreview.net/forum?id=ToTf_MX7Vn)
+
 ## Resources
 
 - https://www.wikidata.org/wiki/Wikidata:Property_navboxes
